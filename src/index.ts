@@ -10,6 +10,15 @@ export interface CreateYattServerOptions {
   config?: unknown;
 }
 
+export { createSessionSink, MemorySessionSink, PersistentSessionSink } from './store/sessions.js';
+export type { SessionSink } from './store/sessions.js';
+export { applyReportRetention } from './store/retention.js';
+export type { ReportRetention, RetentionResult } from './store/retention.js';
+export { openDatabase } from './store/sqlite.js';
+export type { SqliteDatabase, SqliteRuntime } from './store/sqlite.js';
+export { Store, mirrorFilePath } from './store/store.js';
+export type { ReportEntry, StorePaths } from './store/store.js';
+
 /**
  * Creates a fully configured YATT MCP server (stdio by default, optional HTTP).
  *
