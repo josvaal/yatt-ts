@@ -18,6 +18,9 @@ export { openDatabase } from './store/sqlite.js';
 export type { SqliteDatabase, SqliteRuntime } from './store/sqlite.js';
 export { Store, mirrorFilePath } from './store/store.js';
 export type { ReportEntry, StorePaths } from './store/store.js';
+export { evaluateToolAccess, isToolListed } from './security/policy.js';
+export type { ToolAccess, ToolCallOptions, ToolPolicy } from './security/policy.js';
+export { generateToken, hashToken, redact, verifyToken } from './security/token.js';
 
 /**
  * Creates a fully configured YATT MCP server (stdio by default, optional HTTP).
