@@ -15,8 +15,9 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { serializeAppDb, type SerializableAppDb } from '../engine/options.js';
+import { engineOptionsFromConfig, serializeAppDb, type SerializableAppDb } from '../engine/options.js';
 import type { ResolvedAppDb } from '../engine/options.js';
+import type { EngineOptions } from '../engine/state.js';
 import { resolveEngineEntry, resolveRuntimeCommand, type RuntimeProbe } from './sidecar-client.js';
 import { buildReportHtml, buildReportJson, reportSlug, type RunRecord, type RunReport } from '../lib/report.js';
 import type { Ctx } from './ctx.js';
@@ -108,16 +109,25 @@ export function buildRunCommand(options: {
   return resolveRuntimeCommand(runtime, engineCliEntry, args, probe);
 }
 
-/** Environment for the CLI process: root + app-db via env, never argv (D22). */
+/**
+ * Environment for the CLI process: root + app-db via env, never argv (D22),
+ * plus the projected engine options (F3): without YATT_ENGINE_JSON the one-shot
+ * engine falls back to the built-in defaults and ignores viewport/timeouts/
+ * toolbar/autoInstall AND the custom artifact paths (F1).
+ */
 export async function buildRunEnv(
   root: string,
   appDb: ResolvedAppDb | null,
+  engineOptions?: EngineOptions,
   extra: NodeJS.ProcessEnv = process.env,
 ): Promise<NodeJS.ProcessEnv> {
   const env: NodeJS.ProcessEnv = { ...extra, YATT_ROOT: root };
   if (appDb) {
     const payload: SerializableAppDb = await serializeAppDb(appDb);
     env.YATT_APP_DB_JSON = JSON.stringify(payload);
+  }
+  if (engineOptions) {
+    env.YATT_ENGINE_JSON = JSON.stringify(engineOptions);
   }
   return env;
 }
@@ -168,7 +178,11 @@ export async function runTestHeadless(
   const spawnCli = hooks.spawnCli ?? defaultSpawnCli;
   const { code, stderr } = await spawnCli(cmd, args, {
     cwd: dirname(engineCliEntry),
-    env: await buildRunEnv(config.paths.root, config.appDb ?? null),
+    env: await buildRunEnv(
+      config.paths.root,
+      config.appDb ?? null,
+      engineOptionsFromConfig(config),
+    ),
   });
   const durationMs = Date.now() - startedAt;
 

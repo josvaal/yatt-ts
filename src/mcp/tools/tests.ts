@@ -13,6 +13,7 @@ import { parseImportedTest } from '../../lib/import.js';
 import type { TestFile } from '../../lib/types.js';
 import { Store } from '../../store/index.js';
 import type { Ctx } from '../ctx.js';
+import { PolicyDeniedError } from '../policy-middleware.js';
 import type { YattStrings } from '../../i18n/index.js';
 import type { ToolRegistrar } from '../policy-middleware.js';
 
@@ -232,6 +233,14 @@ export function registerTestTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStr
       };
       const spec = await buildSpec(doc, loadFlow, format);
       let path: string | null = null;
+      // F7 (D6): `write: true` lands a file in the exports dir — a write path
+      // the tool's `mutating: false` label hides. Read-only mode announces the
+      // denial instead of silently leaking the write.
+      if (a.write && ctx.policy.readOnly) {
+        throw new PolicyDeniedError(
+          "tool 'test_export_playwright' writes a spec file and this server runs in read-only mode",
+        );
+      }
       if (a.write) {
         const dir = ctx.config.paths.exports;
         mkdirSync(dir, { recursive: true });

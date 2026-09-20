@@ -235,6 +235,60 @@ describe('tools via MCP client (in-memory transport)', () => {
     await stop(handle, client);
   });
 
+  it('read-only rejects test_export_playwright write:true with the policy reason; read-only without write and non-readOnly write still work (F7/C08)', async () => {
+    // read-only server: export WITHOUT write is a pure read (allowed),
+    // export WITH write must announce the policy denial (no file lands).
+    const roRoot = makeTmpRoot();
+    const ro = await startWithClient({
+      paths: { root: roRoot },
+      permissions: { readOnly: true },
+    });
+    try {
+      // Seed directly through the store: test_create is mutating and would be
+      // policy-denied on this read-only server.
+      await ro.handle.ctx.store.upsertTest('exp-ro', JSON.stringify(SIMPLE_DOC));
+      const readOnlyNoWrite = jsonOf(
+        await ro.client.callTool({
+          name: 'test_export_playwright',
+          arguments: { name: 'exp-ro' },
+        }),
+      );
+      expect(readOnlyNoWrite.ok).toBe(true);
+      expect(readOnlyNoWrite.path).toBeNull();
+
+      const denied = await ro.client.callTool({
+        name: 'test_export_playwright',
+        arguments: { name: 'exp-ro', write: true },
+      });
+      expect(isError(denied)).toBe(true);
+      expect(textOf(denied)).toContain('test_export_playwright');
+      expect(textOf(denied)).toContain('read-only');
+      expect(existsSync(join(roRoot, 'exports', 'exp-ro.spec.ts'))).toBe(false);
+    } finally {
+      await stop(ro.handle, ro.client);
+    }
+
+    // Non-read-only server: the same write:true call succeeds (control).
+    const root = makeTmpRoot();
+    const { handle, client } = await startWithClient({ paths: { root } });
+    try {
+      await client.callTool({
+        name: 'test_create',
+        arguments: { content: SIMPLE_DOC, name: 'exp-rw' },
+      });
+      const written = jsonOf(
+        await client.callTool({
+          name: 'test_export_playwright',
+          arguments: { name: 'exp-rw', write: true },
+        }),
+      );
+      expect(written.path).toBe(join(root, 'exports', 'exp-rw.spec.ts'));
+      expect(existsSync(written.path)).toBe(true);
+    } finally {
+      await stop(handle, client);
+    }
+  });
+
   it('readOnly: true → mutations rejected with the policy reason, reads work (C08)', async () => {
     const { handle, client } = await startWithClient({
       paths: { root: makeTmpRoot() },

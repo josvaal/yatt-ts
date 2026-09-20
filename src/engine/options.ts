@@ -29,6 +29,12 @@ export function engineOptionsFromConfig(config: ResolvedConfig): EngineOptions {
     runStepTimeoutMs: config.browser.runStepTimeoutMs,
     autoInstallBrowser: config.engine.autoInstallBrowser,
     cdpSync: { ...config.browser.cdpSync },
+    // F1 (C11/D21): the resolved artifact paths reach the engine process via
+    // YATT_ENGINE_JSON, so host store and engine share the SAME db/baselines/
+    // sessions locations even under a fully custom layout.
+    db: config.paths.db,
+    baselinesDir: config.paths.baselines,
+    sessionsDir: config.paths.sessions,
   };
 }
 

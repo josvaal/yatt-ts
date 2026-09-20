@@ -25,7 +25,7 @@
  * non-zero on any failure when run standalone, and the vitest wrapper fails
  * the test when any check fails.
  */
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpFixtureServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -144,7 +144,9 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>yatt-ts pr
   <button id="submit" type="button">Sign in</button>
 </form>
 <p id="result">no result yet</p>
+<p>viewport: <span id="viewport">0</span></p>
 <script>
+document.getElementById('viewport').textContent = String(window.innerWidth);
 document.getElementById('submit').onclick = () => {
   document.getElementById('result').textContent = document.getElementById('username').value;
 };
@@ -175,6 +177,31 @@ async function freePort(): Promise<number> {
 
 function makeTmpRoot(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+/**
+ * S1/C12 helper: relative entries of `dir` that are NOT under `rootName`.
+ * The chosen data root is the only thing allowed to exist inside its parent.
+ */
+function entriesOutsideRoot(dir: string, rootName: string): string[] {
+  const out: string[] = [];
+  const walk = (current: string, rel: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (relPath === rootName || relPath.startsWith(`${rootName}/`)) {
+        if (entry.isDirectory()) walk(join(current, entry.name), relPath);
+        continue;
+      }
+      if (entry.isDirectory()) {
+        out.push(`${relPath}/`);
+        walk(join(current, entry.name), relPath);
+      } else {
+        out.push(relPath);
+      }
+    }
+  };
+  walk(dir, '');
+  return out;
 }
 
 /** Minimal but valid PNG header blob for baseline seeding (C25). */
@@ -275,9 +302,13 @@ async function runProtocolSmoke(): Promise<number> {
     // =====================================================================
     // 3. Main in-memory server: base-smoke parity (C01/C02/C18...).
     //    appDb wired the library-native way: config.appDb (NOT env).
+    //    S1/C12: the root lives inside a dedicated parent that starts EMPTY,
+    //    so "zero entries outside the root after shutdown" is assertable.
     // =====================================================================
-    const rootMain = makeTmpRoot('yatt-ts-proto-main-');
-    roots.push(rootMain);
+    const parentMain = makeTmpRoot('yatt-ts-proto-c12-');
+    roots.push(parentMain);
+    const rootMain = join(parentMain, 'data-root');
+    mkdirSync(rootMain, { recursive: true });
     const appDbDir = makeTmpRoot('yatt-ts-proto-appdb-');
     roots.push(appDbDir);
     const appDbPath = join(appDbDir, 'app.db');
@@ -293,6 +324,9 @@ async function runProtocolSmoke(): Promise<number> {
       paths: { root: rootMain },
       engine: { runtime: 'node' },
       appDb: { type: 'sqlite', file: appDbPath },
+      // F3: a NON-default viewport — the runner e2e below proves it reaches
+      // the one-shot CLI engine (dead-config regression).
+      browser: { defaultViewport: { width: 1112, height: 666 } },
     });
     const client = main.client;
 
@@ -340,12 +374,12 @@ async function runProtocolSmoke(): Promise<number> {
       // ---- Prompts + resources (C03/en side) ----
       const prompts = await client.listPrompts();
       check('prompts registered ≥ 4', prompts.prompts.length >= 4, `${prompts.prompts.length}`);
-      const enNames = prompts.prompts.map((p) => p.name);
+      const enNames = prompts.prompts.map((p) => p.name).sort();
+      // S3: not just "contains" — the en surface is EXACTLY these 5 prompts.
       check(
-        'en prompt names present (C03)',
-        ['create-test', 'diagnose-report', 'explore-page', 'export-spec', 'flow-battery'].every(
-          (n) => enNames.includes(n),
-        ),
+        'en prompts are EXACTLY the 5 expected names (C03/S3)',
+        JSON.stringify(enNames) ===
+          JSON.stringify(['create-test', 'diagnose-report', 'explore-page', 'export-spec', 'flow-battery']),
         enNames.join(','),
       );
       const schemaRes = await client.readResource({ uri: 'yatt://schema' });
@@ -535,6 +569,38 @@ async function runProtocolSmoke(): Promise<number> {
         textOf(dbIns).slice(0, 60),
       );
 
+      // ---- S2/F2 regression: db_assert INSIDE test_run (one-shot CLI) ----
+      // The CLI gets the appDb via YATT_APP_DB_JSON (config.appDb → runner
+      // env) and must NOT null it (F2); the #viewport assert ALSO proves the
+      // non-default viewport reached the CLI through YATT_ENGINE_JSON (F3
+      // runner path).
+      await jsonOf(client, 'test_create', {
+        content: JSON.stringify({
+          schemaVersion: 1,
+          name: 'proto-db',
+          url,
+          steps: [
+            { action: 'goto', value: url },
+            { action: 'assert_text', selector: '#viewport', value: '1112' },
+            { action: 'db_assert', sql: 'SELECT id, name FROM users ORDER BY id', expect: 'rows' },
+          ],
+        }),
+      });
+      const runDb = await jsonOf(client, 'test_run', { name: 'proto-db' });
+      check(
+        'test_run db_assert step passes via config.appDb (F2/S2)',
+        runDb.fail === 0 && runDb.ok === 3,
+        `ok=${runDb.ok} fail=${runDb.fail}`,
+      );
+      const viewportStep = (runDb.steps ?? []).find(
+        (s: { action: string }) => s.action === 'assert_text',
+      );
+      check(
+        'runner env carries the non-default viewport to the CLI engine (F3/S2)',
+        viewportStep?.status === 'ok',
+        JSON.stringify(viewportStep),
+      );
+
       // ---- Tabs ----
       const tabs2 = await jsonOf(client, 'tab_open', { url: 'about:blank' });
       check('tab_open → 2 tabs', tabs2.tabs.length === 2);
@@ -647,12 +713,19 @@ async function runProtocolSmoke(): Promise<number> {
       await call(client, 'test_delete', { name: 'proto-fail' });
       await call(client, 'test_delete', { name: 'proto-dataset' });
       await call(client, 'test_delete', { name: 'proto-copy' });
+      await call(client, 'test_delete', { name: 'proto-db' });
       const finalList = await jsonOf(client, 'test_list');
       check('test_delete cleans everything', finalList.tests.length === 0);
     } finally {
       await client.close().catch(() => {});
       await main.handle.shutdown();
     }
+
+    // S1/C12: after shutdown the parent dir must contain NOTHING beyond the
+    // chosen root itself — the real "zero traces outside the chosen root"
+    // claim (replaces the weak listing-only assert, which is kept above).
+    const strays = entriesOutsideRoot(parentMain, 'data-root');
+    check('C12: zero entries outside the chosen root after shutdown (S1)', strays.length === 0, strays.join(', '));
 
     // =====================================================================
     // 4. HTTP transport + bearer auth (C05/C06) + ping 'deferred'.
@@ -916,6 +989,45 @@ async function runProtocolSmoke(): Promise<number> {
       } finally {
         await tb.client.close().catch(() => {});
         await tb.handle.shutdown();
+      }
+    }
+
+    // =====================================================================
+    // 10b. Custom paths layout end-to-end (F1/C11/D21): the host Store and
+    // the engine must open the SAME db file even under a custom layout —
+    // capture_screenshot writes through the ENGINE db, baseline_list reads
+    // through the HOST store, so visibility proves they share the file.
+    // =====================================================================
+    {
+      const parentF1 = makeTmpRoot('yatt-ts-proto-f1-');
+      roots.push(parentF1);
+      const rootF1 = join(parentF1, 'layout');
+      const f1 = await bootInMemory(dist, {
+        paths: { root: rootF1, db: 'system.db', baselines: 'shots' },
+        engine: { runtime: 'node' },
+      });
+      try {
+        check('custom db path used by the host store (F1/C11)', existsSync(join(rootF1, 'system.db')));
+        expectOpen(await jsonOf(f1.client, 'browser_open', { url }));
+        const shot = await jsonOf(f1.client, 'browser_run_step', {
+          step: { action: 'capture_screenshot', value: 'proto-f1-baseline' },
+        });
+        check('capture_screenshot step ok under custom layout (F1)', shot.ok === true, JSON.stringify(shot));
+        // The baselinesDir override reached the engine too (PNG mirror).
+        check(
+          'custom baselines dir receives the engine PNG mirror (F1/C11)',
+          existsSync(join(rootF1, 'shots', 'proto-f1-baseline.png')),
+        );
+        const baselines = await jsonOf(f1.client, 'baseline_list');
+        check(
+          'host store sees the engine-written baseline — SAME db file (F1/C11)',
+          baselines.count === 1 && baselines.baselines[0] === 'proto-f1-baseline',
+          JSON.stringify(baselines),
+        );
+        await jsonOf(f1.client, 'browser_close', {});
+      } finally {
+        await f1.client.close().catch(() => {});
+        await f1.handle.shutdown();
       }
     }
 

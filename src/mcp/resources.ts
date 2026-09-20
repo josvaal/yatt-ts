@@ -39,7 +39,9 @@ export function registerResources(server: McpServer, ctx: Ctx, strings: YattStri
     async (uri, variables) => {
       const name = String(variables.name);
       const content = store.reportGet(name);
-      if (content === null) throw new Error(msg.reportMissingDelete(name));
+      // F9: this is the READ resource — the miss message must point at
+      // report_list (reportMissingDelete was the wrong copy).
+      if (content === null) throw new Error(msg.reportMissingGet(name));
       return { contents: [{ uri: uri.href, text: content, mimeType: 'application/json' }] };
     },
   );

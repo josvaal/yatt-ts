@@ -92,6 +92,11 @@ Everything is optional; omitted keys take defaults. Unknown keys are rejected wi
 
 Invalid values (wrong type, impossible path, both token forms, …) throw `ConfigError` at boot naming the exact key.
 
+## Security notes
+
+- **CORS is permissive by default.** `http.cors.origins` defaults to `['*']`, mirroring the base YATT tool. For untrusted environments, restrict it to an explicit origin list in your config.
+- **`test_run` variable overrides travel as CLI arguments** to the one-shot engine process (e.g. `--override token=…`), matching the base-tool behavior. They are visible in the host process list (e.g. `ps`) for the duration of the run — avoid secret values in overrides, or contribute env-based override passing later.
+
 ## Recipes
 
 Permission, session, retention, and connection examples live in [`examples/`](./examples) — each one is a runnable, self-contained file:

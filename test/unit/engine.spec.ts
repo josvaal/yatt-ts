@@ -18,6 +18,7 @@ import {
 } from '../../src/mcp/sidecar-client.js';
 import { engineOptionsFromConfig } from '../../src/engine/options.js';
 import { resolveConfig } from '../../src/config/index.js';
+import { DEFAULT_ENGINE_OPTIONS, enginePaths, initEngine, initEngineFromEnv } from '../../src/engine/state.js';
 import type { SidecarEvent } from '../../src/mcp/sidecar-types.js';
 
 const PKG_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -105,6 +106,72 @@ describe('config → engine-options mapping (D10/D11 defaults)', () => {
     expect(options.defaultHeadless).toBe(false);
     expect(options.toolbarInjection).toBe(true);
     expect(options.gotoTimeoutMs).toBe(1234);
+  });
+
+  it('projects the resolved artifact paths so the engine shares the host layout (F1/C11/D21)', () => {
+    const config = resolveConfig({
+      paths: {
+        root: '/tmp/yatt-f1',
+        db: 'system.sqlite',
+        baselines: 'snapshots',
+        sessions: 'login-states',
+      },
+    });
+    const options = engineOptionsFromConfig(config);
+    expect(options.db).toBe(join(config.paths.root, 'system.sqlite'));
+    expect(options.baselinesDir).toBe(join(config.paths.root, 'snapshots'));
+    expect(options.sessionsDir).toBe(join(config.paths.root, 'login-states'));
+  });
+});
+
+/**
+ * F1 bridge-side half: initEngineFromEnv must honor the path overrides that
+ * travel inside YATT_ENGINE_JSON instead of hardcoding the <root> layout.
+ */
+describe('initEngineFromEnv path overrides (F1/C11)', () => {
+  it('defaults to the <root> layout when the projection carries no paths', () => {
+    initEngineFromEnv({ YATT_ROOT: '/tmp/yatt-f1-default' });
+    expect(enginePaths()).toEqual({
+      root: '/tmp/yatt-f1-default',
+      db: join('/tmp/yatt-f1-default', 'yatt.db'),
+      baselinesDir: join('/tmp/yatt-f1-default', 'baselines'),
+      sessionsDir: join('/tmp/yatt-f1-default', 'sessions'),
+    });
+  });
+
+  it('honors db/baselinesDir/sessionsDir overrides from YATT_ENGINE_JSON', () => {
+    initEngineFromEnv({
+      YATT_ROOT: '/tmp/yatt-f1-custom',
+      YATT_ENGINE_JSON: JSON.stringify({
+        db: '/data/yatt/system.db',
+        baselinesDir: '/data/yatt/shots',
+        sessionsDir: '/data/yatt/states',
+      }),
+    });
+    expect(enginePaths()).toEqual({
+      root: '/tmp/yatt-f1-custom',
+      db: '/data/yatt/system.db',
+      baselinesDir: '/data/yatt/shots',
+      sessionsDir: '/data/yatt/states',
+    });
+  });
+
+  it('keeps the browser defaults intact alongside the path overrides', () => {
+    initEngineFromEnv({
+      YATT_ROOT: '/tmp/yatt-f1-mixed',
+      YATT_ENGINE_JSON: JSON.stringify({ db: '/elsewhere/yatt.db' }),
+    });
+    expect(enginePaths().db).toBe('/elsewhere/yatt.db');
+    expect(enginePaths().baselinesDir).toBe(join('/tmp/yatt-f1-mixed', 'baselines'));
+    initEngine(
+      {
+        root: '/tmp/yatt-f1-reset',
+        db: join('/tmp/yatt-f1-reset', 'yatt.db'),
+        baselinesDir: join('/tmp/yatt-f1-reset', 'baselines'),
+        sessionsDir: join('/tmp/yatt-f1-reset', 'sessions'),
+      },
+      DEFAULT_ENGINE_OPTIONS,
+    );
   });
 });
 

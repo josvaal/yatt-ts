@@ -31,6 +31,7 @@ import type { YattStrings } from '../../i18n/index.js';
 import { MemorySessionSink } from '../../store/index.js';
 import { Store } from '../../store/index.js';
 import type { Ctx } from '../ctx.js';
+import { PolicyDeniedError } from '../policy-middleware.js';
 import type { ToolRegistrar } from '../policy-middleware.js';
 import { text } from './tests.js';
 
@@ -90,6 +91,31 @@ async function resolveSessionParam(ctx: Ctx, name: string): Promise<Record<strin
   return { session: name };
 }
 
+/**
+ * Recursively scans a step tree for `capture_screenshot` leaves (F7): the
+ * action inserts a baselines DB row + PNG mirror, which is a WRITE and must
+ * be rejected in read-only mode — including when nested inside structural
+ * blocks (if/repeat/for_each children, elseChildren).
+ */
+function containsCaptureScreenshot(step: Record<string, unknown>): boolean {
+  if (step.action === 'capture_screenshot') return true;
+  for (const key of ['children', 'elseChildren']) {
+    const nested = step[key];
+    if (
+      Array.isArray(nested) &&
+      nested.some(
+        (child) =>
+          !!child &&
+          typeof child === 'object' &&
+          containsCaptureScreenshot(child as Record<string, unknown>),
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function registerBrowserTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStrings): void {
   const args = strings.args;
 
@@ -127,8 +153,11 @@ export function registerBrowserTools(reg: ToolRegistrar, ctx: Ctx, strings: Yatt
       };
       const params: Record<string, unknown> = {
         url: a.url ?? 'about:blank',
-        headless: a.headless !== false,
         variables: [],
+        // F5: an ABSENT headless arg must stay absent so the engine can apply
+        // its configured `defaultHeadless` fallback (C16/D21) — forcing the
+        // key here made the config default unreachable via MCP.
+        ...(a.headless !== undefined ? { headless: a.headless } : {}),
       };
       if (a.viewport) params.viewport = a.viewport;
       if (a.browser) params.browser = a.browser;
@@ -215,6 +244,14 @@ export function registerBrowserTools(reg: ToolRegistrar, ctx: Ctx, strings: Yatt
       const step = a.step;
       if (!step || typeof step.action !== 'string') {
         throw new Error(strings.messages.stepMustHaveAction);
+      }
+      // F7 (D6): `capture_screenshot` writes a baseline (DB row + PNG mirror),
+      // a hidden write path that read-only mode must reject — announced with a
+      // clear policy reason, for leaf steps and structural children alike.
+      if (ctx.policy.readOnly && containsCaptureScreenshot(step)) {
+        throw new PolicyDeniedError(
+          "step 'capture_screenshot' writes a baseline and this server runs in read-only mode",
+        );
       }
       const params = {
         step,

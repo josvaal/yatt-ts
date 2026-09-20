@@ -27,6 +27,12 @@ export interface SessionSink {
   delete(name: string): Promise<void>;
   /** Resolves once every queued write has finished (no-op for the memory sink). */
   flush(): Promise<void>;
+  /**
+   * Wipes every held session on server shutdown (F6/D7: memory sessions are
+   * 'wiped on close'). The persistent sink is a no-op — persisted data belongs
+   * to its DB/mirror owner, not to the process lifecycle.
+   */
+  clear(): Promise<void>;
 }
 
 /** DB + file mirror persistence (current base behavior). */
@@ -82,6 +88,11 @@ export class PersistentSessionSink implements SessionSink {
   async flush(): Promise<void> {
     await this.writeChain;
   }
+
+  /** No-op (F6): persisted sessions survive the process that served them. */
+  async clear(): Promise<void> {
+    // Intentionally empty — see the interface contract.
+  }
 }
 
 /** Ephemeral in-memory persistence: usable live, wiped when the process ends (D7). */
@@ -107,6 +118,11 @@ export class MemorySessionSink implements SessionSink {
 
   async flush(): Promise<void> {
     // Nothing is ever queued on disk; nothing to drain.
+  }
+
+  /** Drops every in-memory session (F6/D7: wiped when the server shuts down). */
+  async clear(): Promise<void> {
+    this.sessions.clear();
   }
 }
 

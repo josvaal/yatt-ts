@@ -92,6 +92,11 @@ Todo es opcional; las claves omitidas toman defaults. Las claves desconocidas se
 
 Valores inválidos (tipo incorrecto, ruta imposible, ambas formas de token, …) lanzan `ConfigError` en el arranque nombrando la clave exacta.
 
+## Notas de seguridad
+
+- **CORS es permisivo por defecto.** `http.cors.origins` toma `['*']` como default, igual que la herramienta base de YATT. En entornos no confiables, restringilo a una lista explícita de orígenes en tu configuración.
+- **Los overrides de variables de `test_run` viajan como argumentos CLI** del proceso efímero del motor (p. ej. `--override token=…`), igual que en la herramienta base. Son visibles en la lista de procesos del host (p. ej. `ps`) durante la corrida — evitá valores secretos en los overrides, o contribuí el paso de overrides por env más adelante.
+
 ## Recetas
 
 Los ejemplos de permisos, sesiones, retención y conexión están en [`examples/`](./examples) — cada uno es un archivo autocontenido y ejecutable:

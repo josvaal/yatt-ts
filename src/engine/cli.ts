@@ -223,8 +223,11 @@ async function main() {
     process.exit(2);
   }
   const { file, opts } = parsed;
-  // Flag wins over env (base semantics).
-  initAppDb(opts.appDb);
+  // Flag wins over env (base semantics). F2 regression guard: with no
+  // --app-db flag the env-derived source (YATT_APP_DB_JSON / YATT_APP_DB set
+  // by the runner) must SURVIVE — re-initializing with undefined would null
+  // it and every db_assert/db_wait step would fail with 'define YATT_APP_DB'.
+  if (opts.appDb) initAppDb(opts.appDb);
 
   let doc: {
     name?: string;
@@ -342,7 +345,12 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  main();
+  // F10: an unexpected main() rejection exits with the documented usage-error
+  // code (2) instead of an unhandled rejection with no diagnostic.
+  main().catch((e) => {
+    console.error(e);
+    process.exit(2);
+  });
 }
 
 export { initEngine, main };

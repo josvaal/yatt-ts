@@ -197,16 +197,26 @@ describe('browser tools — live control (fake bridge)', () => {
     expect(jsonOf(closed)).toEqual({ ok: true, open: false });
   });
 
-  it('headless defaults to true and open params pass through (D10)', async () => {
+  it('omitted headless sends NO headless key so the engine default applies (F5/D10)', async () => {
     const { client, sidecar } = await boot();
     await call(client, 'browser_open', { url: 'https://example.test/', viewport: { width: 800 } });
     const record = await engineRecord(sidecar!);
+    // F5 regression: the key must be ABSENT (not forced true) so the engine's
+    // `params.headless ?? options.defaultHeadless` fallback is reachable.
+    expect(record.lastOpen).not.toHaveProperty('headless');
     expect(record.lastOpen).toMatchObject({
       url: 'https://example.test/',
-      headless: true, // D10 default: args.headless !== false
       variables: [],
       viewport: { width: 800 },
     });
+  });
+
+  it('explicit headless true/false is forwarded verbatim (F5/D10)', async () => {
+    const { client, sidecar } = await boot();
+    await call(client, 'browser_open', { headless: false });
+    expect((await engineRecord(sidecar!)).lastOpen).toMatchObject({ headless: false });
+    await call(client, 'browser_open', { headless: true });
+    expect((await engineRecord(sidecar!)).lastOpen).toMatchObject({ headless: true });
   });
 
   it('browser_preview and scroll/click_at return PNG image content blocks', async () => {
@@ -429,6 +439,43 @@ describe('policy on browser tools (D5/D6, C07/C08)', () => {
     // Runtime browser control stays available (no persisted data, D10).
     const open = await call(client, 'browser_open');
     expect(jsonOf(open)).toMatchObject({ ok: true });
+  });
+
+  it('read-only rejects capture_screenshot (leaf AND nested in structural children) with the policy reason (F7)', async () => {
+    const { client } = await boot({ readOnly: true });
+    await call(client, 'browser_open');
+
+    // Leaf step: the baselines write is announced as policy-denied.
+    const leaf = await call(client, 'browser_run_step', {
+      step: { action: 'capture_screenshot', value: 'baseline-name' },
+    });
+    expect(leaf.isError).toBe(true);
+    expect(textOf(leaf)).toContain('capture_screenshot');
+    expect(textOf(leaf)).toContain('read-only');
+
+    // Structural step: the same write hidden inside an `if` branch is caught.
+    const nested = await call(client, 'browser_run_step', {
+      step: {
+        action: 'if',
+        selector: '#name',
+        children: [{ action: 'capture_screenshot', value: 'smuggled' }],
+      },
+    });
+    expect(nested.isError).toBe(true);
+    expect(textOf(nested)).toContain('read-only');
+  });
+
+  it('non-readOnly still allows capture_screenshot through to the engine (F7)', async () => {
+    const { client, sidecar } = await boot();
+    await call(client, 'browser_open');
+    const ok = await call(client, 'browser_run_step', {
+      step: { action: 'capture_screenshot', value: 'allowed-baseline' },
+    });
+    expect(jsonOf(ok)).toMatchObject({ name: 'capture_screenshot', ok: true });
+    expect((await engineRecord(sidecar!)).lastRunStep.step).toMatchObject({
+      action: 'capture_screenshot',
+      value: 'allowed-baseline',
+    });
   });
 
   it("denyTools with denyBehavior 'error' keeps the tool listed but announces the denial", async () => {

@@ -109,6 +109,10 @@ describe('createYattServer bootstrap', () => {
     await expect(client.readResource({ uri: 'yatt://tests/missing' })).rejects.toThrow(
       /does not exist/,
     );
+    // F9: the report-resource miss points at report_list (read guidance).
+    await expect(client.readResource({ uri: 'yatt://reports/missing' })).rejects.toThrow(
+      /report_list/,
+    );
 
     await stop(handle, client);
   });
@@ -154,6 +158,100 @@ describe('createYattServer bootstrap', () => {
       auth: { token: generateToken(), tokenHash: 'a'.repeat(64) },
     };
     await expect(createYattServer(config)).rejects.toThrow(/token/);
+  });
+
+  it('survives client disconnects: A connects → DELETE → B initializes on the SAME server (F4)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'yatt-ts-http-f4-'));
+    const port = 30000 + Math.floor(Math.random() * 20000);
+    const token = generateToken();
+    const handle = await createYattServer({
+      paths: { root },
+      engine: { enabled: false },
+      http: { enabled: true, port },
+      auth: { token },
+    });
+    await handle.start();
+
+    const url = `http://127.0.0.1:${port}/`;
+    const authHeaders = { ...JSON_HEADERS, Authorization: `Bearer ${token}` };
+
+    /** Extracts the JSON-RPC payload out of a JSON or SSE body. */
+    const payloadOf = async (res: Response): Promise<any> => {
+      const raw = await res.text();
+      const text = raw.startsWith('{') ? raw : /^data: (.*)$/m.exec(raw)?.[1] ?? '{}';
+      return JSON.parse(text);
+    };
+
+    try {
+      // Client A: initialize over HTTP.
+      const initA = await fetch(url, { method: 'POST', headers: authHeaders, body: INIT_BODY });
+      expect(initA.status).toBe(200);
+      const sessionA = initA.headers.get('mcp-session-id');
+      expect(sessionA).toBeTruthy();
+
+      // A's session actually routes (tools/list answers inside the session).
+      const listA = await fetch(url, {
+        method: 'POST',
+        headers: { ...authHeaders, 'mcp-session-id': sessionA! },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+      });
+      expect(listA.status).toBe(200);
+      expect((await payloadOf(listA)).result?.tools?.length).toBeGreaterThan(0);
+
+      // A disconnects CLEANLY (DELETE terminates the session).
+      const del = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...authHeaders, 'mcp-session-id': sessionA! },
+      });
+      expect(del.status).toBe(200);
+
+      // Client B: initialize on the SAME server succeeds — no full shutdown on
+      // A's disconnect, no "Server already initialized" for B (F4 regression).
+      const initB = await fetch(url, { method: 'POST', headers: authHeaders, body: INIT_BODY });
+      expect(initB.status).toBe(200);
+      const sessionB = initB.headers.get('mcp-session-id');
+      expect(sessionB).toBeTruthy();
+      expect(sessionB).not.toBe(sessionA);
+      const listB = await fetch(url, {
+        method: 'POST',
+        headers: { ...authHeaders, 'mcp-session-id': sessionB! },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} }),
+      });
+      expect((await payloadOf(listB)).result?.tools?.length).toBeGreaterThan(0);
+
+      // Explicit shutdown still closes everything (listener gone: the next
+      // request either fails or is refused — undici throws on refused/reset).
+      await handle.shutdown();
+      let listenerGone = false;
+      try {
+        const after = await fetch(url, { method: 'POST', headers: authHeaders, body: INIT_BODY });
+        listenerGone = !after.ok;
+      } catch {
+        listenerGone = true;
+      }
+      expect(listenerGone).toBe(true);
+    } finally {
+      await handle.shutdown();
+      expect(existsSync(join(root, 'yatt.db'))).toBe(true);
+    }
+  }, 30000);
+
+  it('memory sessions are wiped on shutdown; zero disk traces (F6/C09/D7)', async () => {
+    const root = makeTmpRoot();
+    const handle = await createYattServer({
+      paths: { root },
+      engine: { enabled: false },
+      sessions: { persist: false },
+    });
+    await handle.ctx.sessionSink.save('doomed', '{"cookies":[],"origins":[]}');
+    expect(await handle.ctx.sessionSink.list()).toEqual(['doomed']);
+
+    await handle.shutdown();
+
+    expect(await handle.ctx.sessionSink.list()).toEqual([]);
+    expect(await handle.ctx.sessionSink.get('doomed')).toBeNull();
+    // Still zero disk: no sessions dir was ever created by the memory sink.
+    expect(existsSync(join(root, 'sessions'))).toBe(false);
   });
 
   it('serves HTTP with bearer auth: 401 without token, accepted with it (C05, C06)', async () => {

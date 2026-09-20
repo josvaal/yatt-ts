@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildRunCommand, runTestDataset, runTestHeadless } from '../../src/mcp/run.js';
+import { buildRunCommand, buildRunEnv, runTestDataset, runTestHeadless } from '../../src/mcp/run.js';
+import { engineOptionsFromConfig } from '../../src/engine/options.js';
 import { resolveEngineEntry } from '../../src/mcp/sidecar-client.js';
 import { resolveConfig } from '../../src/config/index.js';
 import { Store } from '../../src/store/index.js';
@@ -139,6 +140,43 @@ describe('buildRunCommand (pure construction)', () => {
   });
 });
 
+/**
+ * F3: the one-shot CLI must receive the projected engine options (browser
+ * defaults AND the custom artifact paths), otherwise viewport/timeouts/
+ * toolbar/autoInstall are dead config for every headless run.
+ */
+describe('buildRunEnv (engine config projection)', () => {
+  it('carries YATT_ENGINE_JSON with viewport, toolbar flag and the artifact paths (F3+F1)', async () => {
+    const config = resolveConfig({
+      paths: { root: '/tmp/yatt-f3', db: 'custom.db' },
+      browser: {
+        defaultViewport: { width: 1112, height: 666 },
+        toolbarInjection: true,
+      },
+    });
+    const env = await buildRunEnv(config.paths.root, null, engineOptionsFromConfig(config), {});
+    expect(env.YATT_ROOT).toBe(config.paths.root);
+    expect(env.YATT_APP_DB_JSON).toBeUndefined();
+    const projected = JSON.parse(env.YATT_ENGINE_JSON!) as Record<string, unknown>;
+    expect(projected.defaultViewport).toEqual({ width: 1112, height: 666 });
+    expect(projected.toolbarInjection).toBe(true);
+    expect(projected.defaultHeadless).toBe(true);
+    // F1: paths ride along so the CLI opens the SAME db as the host store.
+    expect(projected.db).toBe(config.paths.db);
+    expect(projected.baselinesDir).toBe(config.paths.baselines);
+    expect(projected.sessionsDir).toBe(config.paths.sessions);
+  });
+
+  it('carries the app-db JSON when configured (D22) and omits YATT_ENGINE_JSON without options', async () => {
+    const config = resolveConfig({
+      appDb: { type: 'sqlite', file: '/tmp/app.db' },
+    });
+    const env = await buildRunEnv('/tmp/root', config.appDb ?? null, undefined, {});
+    expect(JSON.parse(env.YATT_APP_DB_JSON!)).toEqual({ type: 'sqlite', file: '/tmp/app.db' });
+    expect(env.YATT_ENGINE_JSON).toBeUndefined();
+  });
+});
+
 describe('runTestHeadless persistence', () => {
   it('saveReport: false skips the store write entirely', async () => {
     const root = makeTmpRoot();
@@ -197,6 +235,46 @@ describe('runTestHeadless persistence', () => {
         engineCliEntry: CLI_ENTRY,
       }),
     ).rejects.toThrow('the run failed without a report: boom\ntrace line');
+  });
+
+  it('absent stepTimeoutMs falls back to config.runner.stepTimeoutMs through the tool surface (F3)', async () => {
+    // Real end of the F3 wiring: the MCP tool runs the one-shot CLI (the fake
+    // CLI, binary runtime) whose argv log proves which --timeout was sent.
+    const root = makeTmpRoot();
+    const fakeCli = join(root, 'fake-cli.mjs');
+    copyFileSync(fileURLToPath(new URL('../fixtures/fake-cli.mjs', import.meta.url)), fakeCli);
+    chmodSync(fakeCli, 0o755);
+    const argvLog = join(root, 'argv.log');
+    const { handle, client } = await startWithClient({
+      paths: { root },
+      engine: { runtime: fakeCli },
+      runner: { stepTimeoutMs: 25000 },
+    });
+    process.env.YATT_FAKE_CLI_LOG = argvLog;
+    try {
+      await client.callTool({
+        name: 'test_create',
+        arguments: { content: { schemaVersion: 1, steps: [] }, name: 'x' },
+      });
+      // No stepTimeoutMs arg → the config default (25000 ms → 25 s) is used.
+      await client.callTool({ name: 'test_run', arguments: { name: 'x' } });
+      // Explicit arg → wins over the config default (5000 ms → 5 s).
+      await client.callTool({
+        name: 'test_run',
+        arguments: { name: 'x', stepTimeoutMs: 5000 },
+      });
+    } finally {
+      delete process.env.YATT_FAKE_CLI_LOG;
+      await stop(handle, client);
+    }
+    const invocations = readFileSync(argvLog, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { argv: string[] });
+    expect(invocations).toHaveLength(2);
+    const timeoutOf = (argv: string[]) => argv[argv.indexOf('--timeout') + 1];
+    expect(timeoutOf(invocations[0].argv)).toBe('25');
+    expect(timeoutOf(invocations[1].argv)).toBe('5');
   });
 });
 

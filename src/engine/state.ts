@@ -59,6 +59,15 @@ export interface EngineOptions {
   autoInstallBrowser: boolean;
   /** CDP window→viewport sync (chromium + visible mode only, as in the base tool). */
   cdpSync: { enabled: boolean; pollIntervalMs: number };
+  /**
+   * Artifact path overrides (F1/C11/D21): when present (projected from
+   * `config.paths` by `engineOptionsFromConfig`), the engine opens/writes the
+   * SAME db/baselines/sessions locations as the host store instead of the
+   * `<root>` defaults. Optional: absent keys fall back to the root layout.
+   */
+  db?: string;
+  baselinesDir?: string;
+  sessionsDir?: string;
 }
 
 /** Defaults = base tool behavior with D10/D11 decisions applied. */
@@ -120,14 +129,17 @@ export const sessionsDir = (): string => join(enginePaths().sessionsDir);
  */
 export function initEngineFromEnv(env: NodeJS.ProcessEnv = process.env): void {
   const root = String(env.YATT_ROOT ?? '').trim() || process.cwd();
+  const parsed = parseEngineOptionsJson(env.YATT_ENGINE_JSON);
+  // F1 (C11/D21): the projected path overrides win over the `<root>` layout
+  // defaults, so the engine process reads/writes the same artifacts as the host.
   initEngine(
     {
       root,
-      db: join(root, 'yatt.db'),
-      baselinesDir: join(root, 'baselines'),
-      sessionsDir: join(root, 'sessions'),
+      db: parsed?.db ?? join(root, 'yatt.db'),
+      baselinesDir: parsed?.baselinesDir ?? join(root, 'baselines'),
+      sessionsDir: parsed?.sessionsDir ?? join(root, 'sessions'),
     },
-    parseEngineOptionsJson(env.YATT_ENGINE_JSON),
+    parsed,
   );
 }
 

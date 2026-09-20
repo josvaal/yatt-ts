@@ -155,7 +155,11 @@ function snapshotOf(res: AppDbResult, max = 120): string {
 /** Shared requirement of the db_* steps: an app database must be configured. */
 function requireAppDb(): void {
   if (!appDbConfigured()) {
-    throw new Error('set YATT_APP_DB (or --app-db) to use db_* steps');
+    // F8: same canonical wording as appdb.ts's appDbQuery error, so both
+    // failure paths give identical guidance (env JSON / config / --app-db).
+    throw new Error(
+      'define YATT_APP_DB (or --app-db), or pass the db parameter to the db_query tool',
+    );
   }
 }
 

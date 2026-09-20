@@ -359,6 +359,20 @@ describe('persistent session sink (DB + mirror)', () => {
     store.close();
   });
 
+  it('clear() is a no-op: persisted sessions survive shutdown (F6)', async () => {
+    const root = tmpRoot();
+    const config = resolveConfig({ paths: { root } });
+    const { store } = await openStore(root);
+    const sink = createSessionSink(config, store);
+
+    await sink.save('stays', '{"cookies":[]}');
+    await sink.clear();
+
+    expect(await sink.list()).toEqual(['stays']);
+    expect(store.sessionGet('stays')).toBe('{"cookies":[]}');
+    store.close();
+  });
+
   it('fails the operation when the sessions mirror cannot be written', async () => {
     const root = tmpRoot();
     writeFileSync(path.join(root, 'blocker'), 'not a dir');
@@ -407,6 +421,23 @@ describe('memory session sink (D7: nothing touches disk, usable live)', () => {
     expect(await sink.get('a')).toBeNull();
     expect(await sink.list()).toEqual([]);
     expect(existsSync(config.paths.sessions)).toBe(false);
+    store.close();
+  });
+
+  it('clear() wipes every in-memory session and still touches no disk (F6/D7)', async () => {
+    const root = tmpRoot();
+    const config = resolveConfig({ paths: { root }, sessions: { persist: false } });
+    const { store } = await openStore(root);
+    const sink = createSessionSink(config, store);
+
+    await sink.save('wipe-a', '{"a":1}');
+    await sink.save('wipe-b', '{"b":2}');
+    await sink.clear();
+
+    expect(await sink.list()).toEqual([]);
+    expect(await sink.get('wipe-a')).toBeNull();
+    expect(existsSync(config.paths.sessions)).toBe(false);
+    expect(store.sessionList()).toEqual([]);
     store.close();
   });
 

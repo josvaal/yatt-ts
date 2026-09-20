@@ -47,7 +47,9 @@ export function registerRunTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStri
           name: a.name,
           env: a.env,
           overrides: coerceOverrides(a.overrides),
-          stepTimeoutMs: a.stepTimeoutMs,
+          // F3: the config runner default fills the absent tool arg (it was
+          // dead config before — the CLI then fell back to its own 40s).
+          stepTimeoutMs: a.stepTimeoutMs ?? ctx.config.runner.stepTimeoutMs,
           browser: a.browser,
           url: a.url,
           saveReport: a.saveReport,
@@ -82,7 +84,7 @@ export function registerRunTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStri
         name: a.name,
         rows,
         env: a.env,
-        stepTimeoutMs: a.stepTimeoutMs,
+        stepTimeoutMs: a.stepTimeoutMs ?? ctx.config.runner.stepTimeoutMs,
         browser: a.browser,
       });
       return text({
