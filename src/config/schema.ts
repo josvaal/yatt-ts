@@ -85,6 +85,12 @@ const StorageSchema = z.strictObject({
 /** Engine sidecar lifecycle: runtime selection and timeouts (defaults = current behavior). */
 const EngineSchema = z.strictObject({
   /**
+   * Master switch: when false the server runs without the engine — `sidecar`
+   * stays null, `ping` reports `engine: 'deferred'` and browser/run/db tools
+   * fail with a clear engine-required error.
+   */
+  enabled: z.boolean().default(true),
+  /**
    * 'auto' probes bun then node; 'bun'/'node' force a runtime; any other non-empty
    * string is treated as a binary path override.
    */

@@ -19,17 +19,20 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import { resolveConfig, type ResolvedConfig, type YattConfig } from '../config/index.js';
+import { engineOptionsFromConfig } from '../engine/options.js';
 import { getStrings, type YattStrings } from '../i18n/index.js';
 import { redact, verifyToken, type ToolPolicy } from '../security/index.js';
 import { applyReportRetention, createSessionSink, Store, type RetentionResult } from '../store/index.js';
 import { VERSION } from '../version.js';
-import type { Ctx } from './ctx.js';
+import type { AppDbQueryResult, Ctx, QueryAppDb } from './ctx.js';
+import { SidecarClient } from './sidecar-client.js';
 import { registerPrompts } from './prompts.js';
 import { createToolRegistrar } from './policy-middleware.js';
 import { registerResources } from './resources.js';
 import { registerDbTools } from './tools/db.js';
 import { registerMetaTools } from './tools/meta.js';
 import { registerReportTools } from './tools/reports.js';
+import { registerRunTools } from './tools/run.js';
 import { registerTestTools } from './tools/tests.js';
 
 /** Result of `createYattServer`: everything a consumer needs to run it. */
@@ -82,14 +85,40 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
     return retentionChain;
   };
 
+  // Engine wiring (T7): the client is constructed eagerly (cheap) but the
+  // engine process only spawns on the first request. With `engine.enabled`
+  // explicitly false the server runs engine-free (ping reports 'deferred').
+  let sidecar: SidecarClient | null = null;
+  let queryAppDb: QueryAppDb | null = null;
+  if (config.engine.enabled) {
+    const client = new SidecarClient({
+      root: config.paths.root,
+      runtime: config.engine.runtime,
+      readyTimeoutMs: config.engine.readyTimeoutMs,
+      requestTimeoutMs: config.engine.requestTimeoutMs,
+      closeGraceMs: config.engine.closeGraceMs,
+      appDb: config.appDb ?? null,
+      engineOptions: engineOptionsFromConfig(config),
+    });
+    sidecar = client;
+    // db_query → engine JSON-RPC (base db tool ↔ appdb contract: per-call
+    // `db` override wins over the configured connection; rows capped by the
+    // engine at 200 with the real count in totalRows).
+    queryAppDb = (params): Promise<AppDbQueryResult> =>
+      client.req<AppDbQueryResult>(
+        'db_query',
+        params.db ? { sql: params.sql, db: params.db } : { sql: params.sql },
+      );
+  }
+
   const ctx: Ctx = {
     config,
     root: config.paths.root,
     store,
     sessionSink,
     policy,
-    sidecar: null, // engine client lands with T7
-    queryAppDb: null, // engine wiring lands with T7
+    sidecar,
+    queryAppDb,
     afterReportMutation,
   };
 
@@ -103,6 +132,7 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
   registerTestTools(registrar, ctx, strings);
   registerReportTools(registrar, ctx, strings);
   registerDbTools(registrar, ctx, strings);
+  registerRunTools(registrar, ctx, strings);
   registerResources(server, ctx, strings);
   registerPrompts(server, strings);
 
@@ -231,6 +261,12 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
       await sessionSink.flush();
     } catch {
       /* nothing queued */
+    }
+    // Orderly engine shutdown: EOF on stdin → the bridge closes Chromium.
+    try {
+      await sidecar?.close();
+    } catch {
+      /* engine already gone */
     }
     try {
       store.close();

@@ -153,7 +153,11 @@ export class Store {
     return row ? row.content : null;
   }
 
-  /** Upsert DB + mirror `reports/<name>.json`; resolves with the mirror path. */
+  /**
+   * Upsert DB + mirror under reports/. The mirror extension follows the
+   * stored name: run reports are `<slug>.json` and their HTML twins
+   * `<slug>.html` (the base runner writes both through this method).
+   */
   upsertReport(name: string, content: string): Promise<string> {
     const safe = Store.sanitizeName(name);
     return this.write(() => {
@@ -163,7 +167,7 @@ export class Store {
         Date.now(),
       ]);
       mkdirSync(this.paths.reports, { recursive: true });
-      const path = mirrorFilePath(this.paths.reports, safe, '.json');
+      const path = mirrorFilePath(this.paths.reports, safe, reportExtension(safe));
       writeFileSync(path, content, 'utf8');
       return path;
     });
@@ -173,7 +177,7 @@ export class Store {
     const safe = Store.sanitizeName(name);
     return this.write(() => {
       this.db.run('DELETE FROM reports WHERE name = ?1', [safe]);
-      rmSync(mirrorFilePath(this.paths.reports, safe, '.json'), { force: true });
+      rmSync(mirrorFilePath(this.paths.reports, safe, reportExtension(safe)), { force: true });
     });
   }
 
@@ -237,4 +241,9 @@ export class Store {
 export function mirrorFilePath(dir: string, name: string, extension: string): string {
   const suffix = name.toLowerCase().endsWith(extension) ? '' : extension;
   return join(dir, `${name}${suffix}`);
+}
+
+/** Mirror extension of a report name (.html for the HTML twins, .json otherwise). */
+function reportExtension(name: string): string {
+  return name.toLowerCase().endsWith('.html') ? '.html' : '.json';
 }

@@ -32,6 +32,10 @@ export interface YattMessages {
   dbReadOnly: () => string;
   dbEngineRequired: string;
   dbQueryTimeout: (timeoutMs: number) => string;
+  /** Saved-test mirror missing at run time (runner). */
+  runTestMissing: (name: string) => string;
+  /** The CLI died without writing the outcome JSON (runner). */
+  runFailedNoReport: (stderrTail: string) => string;
 }
 
 /** Localized descriptions for tool input arguments. */
@@ -47,6 +51,15 @@ export interface YattArgCopy {
   reportName: string;
   sql: string;
   db: string;
+  /** Runner arguments (test_run / test_run_dataset). */
+  runName: string;
+  env: string;
+  overrides: string;
+  stepTimeoutMs: string;
+  browser: string;
+  url: string;
+  saveReport: string;
+  rows: string;
 }
 
 /** Localized tool descriptions. */
@@ -68,6 +81,8 @@ export interface YattToolCopy {
   reportGet: string;
   reportDelete: string;
   dbQuery: string;
+  testRun: string;
+  testRunDataset: string;
 }
 
 /** Complete copy for one locale. */

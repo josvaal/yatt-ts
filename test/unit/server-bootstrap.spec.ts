@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import {
   createYattServer,
   generateToken,
+  VERSION,
   type YattConfig,
   type YattServer,
 } from '../../src/index.js';
@@ -50,10 +51,26 @@ describe('createYattServer bootstrap', () => {
     expect(handle.ctx.root).toBe(root);
     expect(handle.ctx.config.paths.db).toBe(join(root, 'yatt.db'));
     expect(handle.ctx.policy).toEqual({ readOnly: false, denyBehavior: 'error' });
-    expect(handle.ctx.sidecar).toBeNull();
-    expect(handle.ctx.queryAppDb).toBeNull();
+    // Engine enabled by default (T7): the client is constructed eagerly, but
+    // the engine process only spawns on the first request.
+    expect(handle.ctx.sidecar).not.toBeNull();
+    expect(handle.ctx.queryAppDb).not.toBeNull();
 
     await stop(handle, await connect(handle));
+  });
+
+  it('engine.enabled: false keeps the server engine-free (ping deferred)', async () => {
+    const root = makeTmpRoot();
+    const handle = await createYattServer({
+      paths: { root },
+      engine: { enabled: false },
+    });
+    expect(handle.ctx.sidecar).toBeNull();
+    expect(handle.ctx.queryAppDb).toBeNull();
+    const client = await connect(handle);
+    const ping = jsonOf(await client.callTool({ name: 'ping', arguments: {} }));
+    expect(ping).toEqual({ ok: true, engine: 'deferred', version: VERSION });
+    await stop(handle, client);
   });
 
   it('opens the store at the configured path (DB + mirrors under root)', async () => {
@@ -182,7 +199,11 @@ describe('createYattServer bootstrap', () => {
 
   it('answers the MCP client over the chosen transport (C01 partial)', async () => {
     const root = makeTmpRoot();
-    const { handle, client } = await startWithClient({ paths: { root } });
+    // Engine disabled: deterministic ping without spawning the real bridge.
+    const { handle, client } = await startWithClient({
+      paths: { root },
+      engine: { enabled: false },
+    });
     const ping = jsonOf(await client.callTool({ name: 'ping', arguments: {} }));
     expect(ping.ok).toBe(true);
     expect(ping.engine).toBe('deferred');

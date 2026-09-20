@@ -51,6 +51,7 @@ describe('defaults (C14, C28)', () => {
     expect(cfg.sessions).toEqual({ persist: true });
     expect(cfg.storage).toEqual({});
     expect(cfg.engine).toEqual({
+      enabled: true,
       runtime: 'auto',
       readyTimeoutMs: 20000,
       requestTimeoutMs: 120000,

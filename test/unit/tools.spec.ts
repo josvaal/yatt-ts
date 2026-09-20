@@ -41,6 +41,8 @@ const ALL_TOOLS = [
   'test_get',
   'test_list',
   'test_rename',
+  'test_run',
+  'test_run_dataset',
   'test_update',
   'test_validate',
 ];
@@ -338,40 +340,51 @@ describe('tools via MCP client (in-memory transport)', () => {
     await stop(handle, client);
   });
 
-  it('db_query without engine → clear error; injected fn works with guard + caps (C21)', async () => {
-    const { handle, client } = await startWithClient({ paths: { root: makeTmpRoot() } });
+  it('db_query: clear error without engine; injected fn works with guard + caps (C21)', async () => {
+    // Engine explicitly disabled → the tool reports the engine requirement.
+    const { handle, client } = await startWithClient({
+      paths: { root: makeTmpRoot() },
+      engine: { enabled: false },
+    });
 
     const noEngine = await client.callTool({ name: 'db_query', arguments: { sql: 'SELECT 1' } });
     expect(isError(noEngine)).toBe(true);
     expect(textOf(noEngine)).toBe(
       'app database query requires the engine, not available in this server configuration',
     );
+    await stop(handle, client);
 
-    handle.ctx.queryAppDb = async () => ({
+    // An injected query fn (the T7 wiring does exactly this) serves the tool.
+    const { handle: h2, client: c2 } = await startWithClient({ paths: { root: makeTmpRoot() } });
+    h2.ctx.queryAppDb = async () => ({
       columns: ['id'],
       rows: Array.from({ length: 250 }, (_, i) => [i]),
       totalRows: 250,
     });
 
     const ok = jsonOf(
-      await client.callTool({ name: 'db_query', arguments: { sql: 'SELECT id FROM t' } }),
+      await c2.callTool({ name: 'db_query', arguments: { sql: 'SELECT id FROM t' } }),
     );
     expect(ok.columns).toEqual(['id']);
     expect(ok.rows).toHaveLength(200); // ROW_CAP
     expect(ok.totalRows).toBe(250);
 
-    const denied = await client.callTool({
+    const denied = await c2.callTool({
       name: 'db_query',
       arguments: { sql: 'INSERT INTO t VALUES (1)' },
     });
     expect(isError(denied)).toBe(true);
     expect(textOf(denied)).toContain('read-only');
 
-    await stop(handle, client);
+    await stop(h2, c2);
   });
 
-  it('ping and schema respond without engine (C25/C02 partial)', async () => {
-    const { handle, client } = await startWithClient({ paths: { root: makeTmpRoot() } });
+  it('ping and schema respond; ping stays deferred with the engine disabled (C25/C02 partial)', async () => {
+    const { handle, client } = await startWithClient({
+      paths: { root: makeTmpRoot() },
+      engine: { enabled: false },
+    });
+    expect(handle.ctx.sidecar).toBeNull();
 
     const ping = jsonOf(await client.callTool({ name: 'ping', arguments: {} }));
     expect(ping).toEqual({ ok: true, engine: 'deferred', version: '0.1.0' });

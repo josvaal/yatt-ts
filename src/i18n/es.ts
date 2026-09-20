@@ -229,6 +229,10 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
     reportDelete: 'Borra un reporte guardado (BD + archivo en reports/).',
     dbQuery:
       'Ejecuta una consulta de solo lectura (SELECT/WITH/EXPLAIN/PRAGMA) contra la base de datos de la app bajo prueba. Pasá la conexión en `db` (ruta de SQLite o URL "file:" / postgres://); si no, se usa la configuración YATT_APP_DB/--app-db del motor. Devuelve {columns, rows, totalRows}; las filas se recortan a 200.',
+    testRun:
+      'Corre un test guardado en headless (motor Chromium por defecto) y guarda un reporte en la biblioteca. Parámetros: entorno de variables, overrides por corrida, timeout por paso. Devuelve el resumen con los pasos y el nombre del reporte.',
+    testRunDataset:
+      'Data-driven: corre un test una vez por fila de overrides y devuelve el resultado de cada fila más totales. No guarda reporte.',
   },
 
   args: {
@@ -244,6 +248,14 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
       'Nombre del reporte (ver report_list, p. ej. "mi-test-YATT-20260902-101500.json")',
     sql: 'Consulta SQL de solo lectura (SELECT, WITH, EXPLAIN o PRAGMA)',
     db: "Conexión: ruta de SQLite o URL 'file:' / postgres:// (gana sobre la config global)",
+    runName: 'Nombre del test guardado',
+    env: 'Entorno de variables (default "default")',
+    overrides: 'Valores de variables que ganan sobre el entorno',
+    stepTimeoutMs: 'Timeout por paso en ms (default 40000)',
+    browser: 'Motor (default chromium)',
+    url: 'Sobrescribe la URL inicial',
+    saveReport: 'Guardar reporte en la biblioteca (default true)',
+    rows: 'Lista de filas; una corrida por fila (valores = overrides de variables)',
   },
 
   messages: {
@@ -261,5 +273,7 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
     dbEngineRequired:
       'la consulta a la base de la app requiere el motor, no disponible en esta configuración del servidor',
     dbQueryTimeout: (timeoutMs) => `db: la consulta excedió el tiempo de espera (${timeoutMs} ms)`,
+    runTestMissing: (name) => `el test "${name}" no está guardado (crealo con test_create primero)`,
+    runFailedNoReport: (tail) => `la corrida falló sin reporte: ${tail}`,
   },
 };

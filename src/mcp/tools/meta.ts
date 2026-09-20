@@ -1,7 +1,9 @@
 /**
  * Meta tools (4): ping, schema, baseline_list, baseline_get. Ported from the
- * base `mcp/src/tools/meta.ts`. Without the engine (sidecar null), ping
- * reports `engine: 'deferred'`; T7/T9 swap in the real check.
+ * base `mcp/src/tools/meta.ts`. With the engine enabled, ping performs the
+ * real check (req('ping'), 15 s timeout): `{ok:true, engine:'ready'}` or
+ * `{ok:false, engine:'unavailable'}`; with `engine.enabled: false` it reports
+ * `engine: 'deferred'`.
  */
 import { z } from 'zod';
 
@@ -24,16 +26,21 @@ export function registerMetaTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStr
     inputSchema: {},
     mutating: false,
     handler: async () => {
-      let engine: 'ready' | 'down' | 'deferred' = 'deferred';
+      // Engine check (T7): real probe when the engine is enabled — req('ping')
+      // with the base 15s timeout; 'deferred' only when the engine is
+      // explicitly disabled by config (engine.enabled: false).
+      let ok = true;
+      let engine: 'ready' | 'unavailable' | 'deferred' = 'deferred';
       if (ctx.sidecar) {
-        engine = await ctx.sidecar
+        ok = await ctx.sidecar
           .req('ping', {}, PING_TIMEOUT_MS)
           .then(
-            () => 'ready' as const,
-            () => 'down' as const,
+            () => true,
+            () => false,
           );
+        engine = ok ? 'ready' : 'unavailable';
       }
-      return text({ ok: true, engine, version: VERSION });
+      return text({ ok, engine, version: VERSION });
     },
   });
 

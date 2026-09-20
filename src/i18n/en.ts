@@ -227,6 +227,10 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
     reportDelete: 'Deletes a saved report (DB + file under reports/).',
     dbQuery:
       'Executes a read-only query (SELECT/WITH/EXPLAIN/PRAGMA) against the app-under-test database. Pass the connection in `db` (SQLite path or "file:" / postgres:// URL); otherwise the engine-side YATT_APP_DB/--app-db configuration applies. Returns {columns, rows, totalRows}; rows are capped at 200.',
+    testRun:
+      'Runs a saved test headless (Chromium engine by default) and saves a report in the library. Parameters: variable environment, per-run overrides, per-step timeout. Returns the summary with the steps and the report name.',
+    testRunDataset:
+      'Data-driven: runs a test once per row of overrides and returns each row result plus totals. No report is saved.',
   },
 
   args: {
@@ -241,6 +245,14 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
     reportName: 'Report name (see report_list, e.g. "my-test-YATT-20260902-101500.json")',
     sql: 'Read-only SQL query (SELECT, WITH, EXPLAIN or PRAGMA)',
     db: 'Connection: SQLite path or "file:" / postgres:// URL (overrides the global configuration)',
+    runName: 'Name of the saved test',
+    env: 'Variable environment (default "default")',
+    overrides: 'Variable values that win over the environment',
+    stepTimeoutMs: 'Timeout per step in ms (default 40000)',
+    browser: 'Engine (default chromium)',
+    url: 'Overrides the initial URL',
+    saveReport: 'Save report in the library (default true)',
+    rows: 'List of rows; one run per row (values = variable overrides)',
   },
 
   messages: {
@@ -258,5 +270,7 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
     dbEngineRequired:
       'app database query requires the engine, not available in this server configuration',
     dbQueryTimeout: (timeoutMs) => `db: query timed out after ${timeoutMs} ms`,
+    runTestMissing: (name) => `test "${name}" is not saved (create it with test_create first)`,
+    runFailedNoReport: (tail) => `the run failed without a report: ${tail}`,
   },
 };
