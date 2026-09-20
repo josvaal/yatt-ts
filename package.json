@@ -4,6 +4,27 @@
   "description": "Highly configurable YATT MCP server library: spin up your own UI-testing MCP server (35 tools, Playwright engine, headless-first) with strict, typed configuration for paths, HTTP transport, auth, permissions, sessions and retention.",
   "type": "module",
   "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "yatt",
+    "testing",
+    "e2e",
+    "browser-automation",
+    "playwright",
+    "ui-testing",
+    "test-runner",
+    "headless"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yatt-labs/yatt-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yatt-labs/yatt-ts/issues"
+  },
+  "homepage": "https://github.com/yatt-labs/yatt-ts#readme",
   "engines": {
     "node": ">=22.5"
   },
