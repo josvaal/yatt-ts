@@ -231,6 +231,31 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
       'Runs a saved test headless (Chromium engine by default) and saves a report in the library. Parameters: variable environment, per-run overrides, per-step timeout. Returns the summary with the steps and the report name.',
     testRunDataset:
       'Data-driven: runs a test once per row of overrides and returns each row result plus totals. No report is saved.',
+    browserOpen:
+      'Open (or reopen) the controlled browser. headless=true by default; visible only when you need to point by hand.',
+    browserClose: 'Closes the controlled browser (clears the browser session).',
+    browserStatus:
+      'State of the controlled browser: open/closed, engine, URL and interaction.',
+    browserPreview:
+      'Captures the current viewport as a PNG image (the AI sees the page) + url, title, scroll and dimensions. It is the main visual inspection tool.',
+    browserEval:
+      'Executes arbitrary JavaScript in the current page and returns the value (useful to inspect the DOM, read texts, count elements, try selectors).',
+    browserRunStep:
+      "Runs a YATT (leaf) step in the current page: click, type, hover, assert_*, goto, wait_visible, etc. Returns ok/error, duration and, on failure, an evidence screenshot. With `vars` it interpolates {{name}} into the step before running it. Structure steps (if/repeat/for_each/run_flow) run with test_run, not here.",
+    browserCondition:
+      'Checks whether an element exists in the page (or whether a variable condition holds); waits for the condition with optional polling (timeoutMs > 0 repeats the check until true or the timeout expires). Returns {value, elapsedMs}.',
+    browserScroll:
+      'Scrolls the page vertically (dy in pixels, positive moves down) and returns the updated preview.',
+    browserClickAt:
+      'Click at viewport coordinates (x, y in CSS pixels); returns the resolved selector of the clicked element (data-testid → id → CSS path) plus the updated preview. Prefer browser_run_step with a selector for reproducible steps.',
+    tabOpen: 'Opens a new tab (optionally with a URL) and returns the tab list.',
+    tabList: 'Lists the open tabs: index, active, title and URL.',
+    tabSwitch: 'Switches to the tab with the given index (0-based).',
+    tabClose: 'Closes a tab (by index; without an index closes the active one).',
+    sessionSave:
+      'Saves the current session state (cookies/localStorage) under a name, for tests with prior authentication.',
+    sessionList: 'Lists the saved sessions.',
+    sessionDelete: 'Deletes a saved session.',
   },
 
   args: {
@@ -253,6 +278,26 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
     url: 'Overrides the initial URL',
     saveReport: 'Save report in the library (default true)',
     rows: 'List of rows; one run per row (values = variable overrides)',
+    openUrl: 'Initial URL (default about:blank)',
+    headless: 'Headless mode (default true)',
+    viewport: 'Viewport size (default 1280×800)',
+    session:
+      'Name of a saved session (cookies/localStorage). With sessions.persist:false the state is restored inline from memory',
+    expression: 'JS expression (evaluated with the returned result)',
+    runStepTimeoutMs: 'Timeout in ms (default 40000)',
+    vars:
+      'Variables to interpolate {{name}} into the step (e.g. { "email": "a@b.com" })',
+    conditionSelector: 'Selector of the element to check',
+    conditionValue: 'Alternative: variable condition (e.g. {{status}} == ok)',
+    conditionTimeoutMs:
+      'If > 0, polls until the condition is true or the timeout expires (default 0 = a single check)',
+    intervalMs: 'Interval between checks in ms (default 300)',
+    scrollDy: 'Pixels to scroll',
+    clickX: 'X coordinate (CSS pixels)',
+    clickY: 'Y coordinate (CSS pixels)',
+    tabIndex: 'Tab index (see tab_list)',
+    tabUrl: 'Initial URL of the new tab',
+    sessionName: 'Session name',
   },
 
   messages: {
@@ -272,5 +317,8 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
     dbQueryTimeout: (timeoutMs) => `db: query timed out after ${timeoutMs} ms`,
     runTestMissing: (name) => `test "${name}" is not saved (create it with test_create first)`,
     runFailedNoReport: (tail) => `the run failed without a report: ${tail}`,
+    engineRequired:
+      'this tool requires the engine, which is not available in this server configuration (engine.enabled: false)',
+    stepMustHaveAction: 'step must be an object with an action',
   },
 };

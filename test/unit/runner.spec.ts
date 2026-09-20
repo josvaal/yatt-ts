@@ -225,12 +225,12 @@ describe('runTestDataset (C20)', () => {
 });
 
 describe('test_run tools through the MCP surface', () => {
-  it('registers test_run + test_run_dataset (full inventory grows to 19)', async () => {
+  it('registers test_run + test_run_dataset (full catalog grows to 35 with the T9 browser tools)', async () => {
     const { handle, client } = await startWithClient({ paths: { root: makeTmpRoot() } });
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toContain('test_run');
     expect(names).toContain('test_run_dataset');
-    expect(names).toHaveLength(19);
+    expect(names).toHaveLength(35);
     await stop(handle, client);
   });
 

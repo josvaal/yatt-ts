@@ -36,6 +36,10 @@ export interface YattMessages {
   runTestMissing: (name: string) => string;
   /** The CLI died without writing the outcome JSON (runner). */
   runFailedNoReport: (stderrTail: string) => string;
+  /** Browser/db tools when `engine.enabled: false` (T9). */
+  engineRequired: string;
+  /** `browser_run_step` called without a step object carrying `action`. */
+  stepMustHaveAction: string;
 }
 
 /** Localized descriptions for tool input arguments. */
@@ -60,6 +64,24 @@ export interface YattArgCopy {
   url: string;
   saveReport: string;
   rows: string;
+  /** Browser tools (T9). */
+  openUrl: string;
+  headless: string;
+  viewport: string;
+  session: string;
+  expression: string;
+  runStepTimeoutMs: string;
+  vars: string;
+  conditionSelector: string;
+  conditionValue: string;
+  conditionTimeoutMs: string;
+  intervalMs: string;
+  scrollDy: string;
+  clickX: string;
+  clickY: string;
+  tabIndex: string;
+  tabUrl: string;
+  sessionName: string;
 }
 
 /** Localized tool descriptions. */
@@ -83,6 +105,23 @@ export interface YattToolCopy {
   dbQuery: string;
   testRun: string;
   testRunDataset: string;
+  /** Browser tools (T9). */
+  browserOpen: string;
+  browserClose: string;
+  browserStatus: string;
+  browserPreview: string;
+  browserEval: string;
+  browserRunStep: string;
+  browserCondition: string;
+  browserScroll: string;
+  browserClickAt: string;
+  tabOpen: string;
+  tabList: string;
+  tabSwitch: string;
+  tabClose: string;
+  sessionSave: string;
+  sessionList: string;
+  sessionDelete: string;
 }
 
 /** Complete copy for one locale. */

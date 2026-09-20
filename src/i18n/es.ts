@@ -233,6 +233,31 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
       'Corre un test guardado en headless (motor Chromium por defecto) y guarda un reporte en la biblioteca. Parámetros: entorno de variables, overrides por corrida, timeout por paso. Devuelve el resumen con los pasos y el nombre del reporte.',
     testRunDataset:
       'Data-driven: corre un test una vez por fila de overrides y devuelve el resultado de cada fila más totales. No guarda reporte.',
+    browserOpen:
+      'Abre (o reabre) el navegador controlado. headless=true por defecto; visible solo si hace falta apuntar con la mano.',
+    browserClose: 'Cierra el navegador controlado (limpia la sesión del browser).',
+    browserStatus:
+      'Estado del navegador controlado: abierto/cerrado, motor, URL e interacción.',
+    browserPreview:
+      'Captura del viewport actual como imagen PNG (la IA ve la página) + url, título, scroll y dimensiones. Es la herramienta principal de inspección visual.',
+    browserEval:
+      'Ejecuta JavaScript arbitrario en la página actual y devuelve el valor (útil para inspeccionar el DOM, leer textos, contar elementos, probar selectores).',
+    browserRunStep:
+      'Ejecuta un paso YATT (hoja) en la página actual: click, type, hover, assert_*, goto, wait_visible, etc. Devuelve ok/error, duración y, si falla, un screenshot de evidencia. Con `vars` interpola {{nombre}} en el paso antes de ejecutarlo. Pasos de estructura (if/repeat/for_each/run_flow) se corren con test_run, no aquí.',
+    browserCondition:
+      'Comprueba si existe un elemento en la página (o si se cumple una condición de variable); espera por condición con polling opcional (timeoutMs > 0 repite el chequeo hasta que sea verdadero o venza el timeout). Devuelve {value, elapsedMs}.',
+    browserScroll:
+      'Desplaza la página verticalmente (dy en píxeles, positivo hacia abajo) y devuelve la preview actualizada.',
+    browserClickAt:
+      'Clic en coordenadas del viewport (x, y en píxeles CSS); devuelve el selector resuelto del elemento clickeado (data-testid → id → path CSS) más la preview actualizada. Preferí browser_run_step con selector para pasos reproducibles.',
+    tabOpen: 'Abre una pestaña nueva (opcionalmente con URL) y devuelve la lista de pestañas.',
+    tabList: 'Lista las pestañas abiertas: índice, activa, título y URL.',
+    tabSwitch: 'Cambia a la pestaña con el índice dado (0-based).',
+    tabClose: 'Cierra una pestaña (por índice; sin índice cierra la activa).',
+    sessionSave:
+      'Guarda el estado de sesión actual (cookies/localStorage) con un nombre, para tests con autenticación previa.',
+    sessionList: 'Lista las sesiones guardadas.',
+    sessionDelete: 'Borra una sesión guardada.',
   },
 
   args: {
@@ -256,6 +281,27 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
     url: 'Sobrescribe la URL inicial',
     saveReport: 'Guardar reporte en la biblioteca (default true)',
     rows: 'Lista de filas; una corrida por fila (valores = overrides de variables)',
+    openUrl: 'URL inicial (default about:blank)',
+    headless: 'Modo sin ventana (default true)',
+    viewport: 'Tamaño del viewport (default 1280×800)',
+    session:
+      'Nombre de una sesión guardada (cookies/localStorage). Con sessions.persist:false el estado se restaura inline desde memoria',
+    expression: 'Expresión JS (se evalúa con el resultado devuelto)',
+    runStepTimeoutMs: 'Timeout en ms (default 40000)',
+    vars:
+      'Variables para interpolar {{nombre}} en el paso (p. ej. { "email": "a@b.com" })',
+    conditionSelector: 'Selector del elemento a comprobar',
+    conditionValue:
+      'Alternativa: condición de variable (p. ej. {{estado}} == ok)',
+    conditionTimeoutMs:
+      'Si es > 0, polling hasta que la condición sea verdadera o venza (default 0 = un solo chequeo)',
+    intervalMs: 'Intervalo entre chequeos en ms (default 300)',
+    scrollDy: 'Píxeles a desplazar',
+    clickX: 'Coordenada X (píxeles CSS)',
+    clickY: 'Coordenada Y (píxeles CSS)',
+    tabIndex: 'Índice de la pestaña (ver tab_list)',
+    tabUrl: 'URL inicial de la pestaña nueva',
+    sessionName: 'Nombre de la sesión',
   },
 
   messages: {
@@ -275,5 +321,8 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
     dbQueryTimeout: (timeoutMs) => `db: la consulta excedió el tiempo de espera (${timeoutMs} ms)`,
     runTestMissing: (name) => `el test "${name}" no está guardado (crealo con test_create primero)`,
     runFailedNoReport: (tail) => `la corrida falló sin reporte: ${tail}`,
+    engineRequired:
+      'esta herramienta requiere el motor, no disponible en esta configuración del servidor (engine.enabled: false)',
+    stepMustHaveAction: 'step debe ser un objeto con action',
   },
 };

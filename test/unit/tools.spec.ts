@@ -28,12 +28,28 @@ const TWO_STEP_DOC = {
 const ALL_TOOLS = [
   'baseline_get',
   'baseline_list',
+  'browser_click_at',
+  'browser_close',
+  'browser_condition',
+  'browser_eval',
+  'browser_open',
+  'browser_preview',
+  'browser_run_step',
+  'browser_scroll',
+  'browser_status',
   'db_query',
   'ping',
   'report_delete',
   'report_get',
   'report_list',
   'schema',
+  'session_delete',
+  'session_list',
+  'session_save',
+  'tab_close',
+  'tab_list',
+  'tab_open',
+  'tab_switch',
   'test_create',
   'test_delete',
   'test_duplicate',
@@ -48,7 +64,7 @@ const ALL_TOOLS = [
 ];
 
 describe('tools via MCP client (in-memory transport)', () => {
-  it('registers the full engine-free tool inventory (C02 partial)', async () => {
+  it('registers the full tool catalog: 35 tools (C02; engine-free config included since T9)', async () => {
     const { handle, client } = await startWithClient({ paths: { root: makeTmpRoot() } });
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual(ALL_TOOLS);

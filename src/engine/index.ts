@@ -278,6 +278,14 @@ async function openBrowser(params: {
   viewport?: { width: number; height: number };
   variables?: string[];
   session?: string;
+  /**
+   * yatt-ts protocol extension (T9, D7 — non-breaking, optional): an inline
+   * Playwright storage state (parsed object). Used by the MCP layer to
+   * restore sessions stored in the EPHEMERAL memory sink without ever
+   * touching the disk. When present it wins over `session` (the MCP layer
+   * never sends both); the persistent path keeps passing the session name.
+   */
+  storageState?: unknown;
   browser?: string;
   timezoneId?: string;
   geolocation?: { latitude: number; longitude: number } | null;
@@ -297,13 +305,22 @@ async function openBrowser(params: {
   // default (which itself defaults to true).
   const headless = params.headless ?? options.defaultHeadless;
   browser = await ENGINE_LAUNCHERS[engineName].launch({ headless });
-  // Session: source of truth is the DB (yatt.db); fallback to the legacy
-  // sessions/<name>.json file pre-migration or when the DB is unavailable.
+  // Session resolution order (T9): an inline `storageState` (protocol
+  // extension for the memory sink) wins; otherwise the named session is
+  // looked up — source of truth is the DB (yatt.db), with a fallback to the
+  // legacy sessions/<name>.json file pre-migration or when the DB is
+  // unavailable.
   const sname = params.session ? sanitizeName(String(params.session)) : '';
+  const inlineState = params.storageState;
   let storageState: NonNullable<
     import('playwright').BrowserContextOptions['storageState']
   > | undefined;
-  if (sname) {
+  if (inlineState !== undefined && inlineState !== null && typeof inlineState === 'object') {
+    storageState = inlineState as NonNullable<
+      import('playwright').BrowserContextOptions['storageState']
+    >;
+  }
+  if (storageState === undefined && sname) {
     const db = await getDb();
     if (db) {
       const row = db.get('SELECT storage_state FROM sessions WHERE name = ?', [sname]);
@@ -447,6 +464,7 @@ async function handleRequest(id: number, method: string, params: Record<string, 
             viewport?: { width: number; height: number };
             variables?: string[];
             session?: string;
+            storageState?: unknown;
             browser?: string;
             timezoneId?: string;
             geolocation?: { latitude: number; longitude: number } | null;
@@ -736,6 +754,14 @@ async function handleRequest(id: number, method: string, params: Record<string, 
       }
 
       // ---- Session state: cookies + localStorage ----
+      //
+      // yatt-ts protocol extension (T9, D7 — non-breaking, optional):
+      // `session_save` accepts `persist: false`, in which case the bridge
+      // returns the raw storage state in the response (`state`, JSON string)
+      // and writes NOTHING — the host-side session sink owns persistence, so
+      // `sessions.persist: false` produces zero disk writes. Without the
+      // flag the base behavior is preserved exactly (write into the engine
+      // DB, or the legacy file when the DB is unavailable).
       case 'session_save': {
         const c = context;
         if (!c) {
@@ -747,19 +773,29 @@ async function handleRequest(id: number, method: string, params: Record<string, 
           respond(id, false, { error: 'missing the session name' });
           return;
         }
-        const db = await getDb();
+        const persist = params.persist !== false;
         const state = await c.storageState();
-        if (db) {
-          db.run(
-            'INSERT OR REPLACE INTO sessions (name, storage_state, updated_at) VALUES (?, ?, ?)',
-            [name, JSON.stringify(state), Date.now()],
-          );
-        } else {
-          // Legacy (no DB): file under sessions/.
-          mkdirSync(sessionsDir(), { recursive: true });
-          writeFileSync(join(sessionsDir(), `${name}.json`), JSON.stringify(state, null, 2));
+        const serialized = JSON.stringify(state);
+        if (persist) {
+          const db = await getDb();
+          if (db) {
+            db.run(
+              'INSERT OR REPLACE INTO sessions (name, storage_state, updated_at) VALUES (?, ?, ?)',
+              [name, serialized, Date.now()],
+            );
+          } else {
+            // Legacy (no DB): file under sessions/.
+            mkdirSync(sessionsDir(), { recursive: true });
+            writeFileSync(join(sessionsDir(), `${name}.json`), JSON.stringify(state, null, 2));
+          }
         }
-        respond(id, true, { result: { ok: true, name } });
+        respond(
+          id,
+          true,
+          persist
+            ? { result: { ok: true, name } }
+            : { result: { ok: true, name, state: serialized } },
+        );
         break;
       }
       case 'session_list': {

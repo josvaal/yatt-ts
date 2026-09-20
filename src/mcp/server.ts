@@ -30,6 +30,7 @@ import { registerPrompts } from './prompts.js';
 import { createToolRegistrar } from './policy-middleware.js';
 import { registerResources } from './resources.js';
 import { registerDbTools } from './tools/db.js';
+import { registerBrowserTools } from './tools/browser.js';
 import { registerMetaTools } from './tools/meta.js';
 import { registerReportTools } from './tools/reports.js';
 import { registerRunTools } from './tools/run.js';
@@ -133,6 +134,9 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
   registerReportTools(registrar, ctx, strings);
   registerDbTools(registrar, ctx, strings);
   registerRunTools(registrar, ctx, strings);
+  // Browser tools (T9): live-browser control + the session persistence
+  // toggle (ctx.sessionSink; sessions.persist:false → memory-only, D7).
+  registerBrowserTools(registrar, ctx, strings);
   registerResources(server, ctx, strings);
   registerPrompts(server, strings);
 
