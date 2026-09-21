@@ -22,6 +22,16 @@ import { join } from 'node:path';
  * exactly like a consumer would. `npm run build` is therefore required
  * before running the e2e (a clear error names it when dist is missing).
  */
+/**
+ * Structural surface of the dist SidecarClient used below: the smoke loads
+ * dist/ through a dynamic (untyped) import, so pin the client's shape
+ * explicitly instead of relying on `any`.
+ */
+interface SmokeSidecarClient {
+  req<T>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
+  close(): Promise<void>;
+}
+
 async function loadDist() {
   try {
     const [sidecar, options, config] = await Promise.all([
@@ -83,7 +93,7 @@ e2e('engine smoke (real Chromium, headless)', () => {
       requestTimeoutMs: 60000,
       closeGraceMs: 5000,
       engineOptions: engineOptionsFromConfig(config),
-    });
+    }) as SmokeSidecarClient;
 
     try {
       // ping (also proves the bridge spawned + spoke sidecar_ready).
@@ -162,7 +172,7 @@ e2e('engine smoke (real Chromium, headless)', () => {
       requestTimeoutMs: 60000,
       closeGraceMs: 5000,
       engineOptions: engineOptionsFromConfig(config),
-    });
+    }) as SmokeSidecarClient;
     try {
       await client.req('ping');
       await client.req('open', { url, headless: true });

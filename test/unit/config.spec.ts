@@ -19,6 +19,21 @@ function tmpDir(): string {
   return mkdtempSync(path.join(tmpdir(), 'yatt-ts-config-'));
 }
 
+/** Narrows the resolved `appDb` union to its postgres branch: the specs
+ *  below always configure postgres, and the resolved union also carries the
+ *  sqlite branch whose shape lacks these fields. */
+function postgresOf(appDb: unknown): {
+  password?: string;
+  passwordProvider?: () => string | Promise<string>;
+  ssl?: boolean;
+} {
+  return appDb as {
+    password?: string;
+    passwordProvider?: () => string | Promise<string>;
+    ssl?: boolean;
+  };
+}
+
 function expectConfigError(run: () => unknown, messagePattern: RegExp): ConfigError {
   try {
     run();
@@ -162,8 +177,8 @@ describe('appDb validation (D22, C21 groundwork)', () => {
       appDb: { type: 'postgres', host: 'db.local', user: 'u', database: 'd', password: 'secret' },
     });
     expect(cfg.appDb).toEqual({ type: 'postgres', host: 'db.local', port: 5432, user: 'u', database: 'd', password: 'secret' });
-    expect(cfg.appDb?.passwordProvider).toBeUndefined();
-    expect(cfg.appDb?.ssl).toBeUndefined();
+    expect(postgresOf(cfg.appDb).passwordProvider).toBeUndefined();
+    expect(postgresOf(cfg.appDb).ssl).toBeUndefined();
   });
 
   it('accepts exactly one of password or passwordProvider', () => {
@@ -172,13 +187,13 @@ describe('appDb validation (D22, C21 groundwork)', () => {
       appDb: { type: 'postgres', host: 'h', user: 'u', database: 'd', password: 'secret' },
     });
     expect(withPassword.appDb).toMatchObject({ password: 'secret' });
-    expect(withPassword.appDb?.passwordProvider).toBeUndefined();
+    expect(postgresOf(withPassword.appDb).passwordProvider).toBeUndefined();
 
     const withProvider = resolveConfig({
       appDb: { type: 'postgres', host: 'h', user: 'u', database: 'd', passwordProvider: provider },
     });
     expect(withProvider.appDb).toMatchObject({ passwordProvider: provider });
-    expect(withProvider.appDb?.password).toBeUndefined();
+    expect(postgresOf(withProvider.appDb).password).toBeUndefined();
   });
 
   it('rejects providing both password and passwordProvider', () => {

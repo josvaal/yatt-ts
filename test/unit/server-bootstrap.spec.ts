@@ -91,7 +91,9 @@ describe('createYattServer bootstrap', () => {
 
     const schema = await client.readResource({ uri: 'yatt://schema' });
     expect(schema.contents[0].mimeType).toBe('text/markdown');
-    expect(String(schema.contents[0].text)).toContain('# YATT test format (schemaVersion 1)');
+    expect(String((schema.contents[0] as { text: string }).text)).toContain(
+      '# YATT test format (schemaVersion 1)',
+    );
 
     await client.callTool({
       name: 'test_create',
@@ -101,11 +103,11 @@ describe('createYattServer bootstrap', () => {
       },
     });
     const test = await client.readResource({ uri: 'yatt://tests/res-test' });
-    expect(JSON.parse(String(test.contents[0].text)).name).toBe('res-test');
+    expect(JSON.parse(String((test.contents[0] as { text: string }).text)).name).toBe('res-test');
 
     await handle.ctx.store.upsertReport('res-rep.json', '{"title":"res"}');
     const report = await client.readResource({ uri: 'yatt://reports/res-rep.json' });
-    expect(JSON.parse(String(report.contents[0].text)).title).toBe('res');
+    expect(JSON.parse(String((report.contents[0] as { text: string }).text)).title).toBe('res');
 
     await expect(client.readResource({ uri: 'yatt://tests/missing' })).rejects.toThrow(
       /does not exist/,
@@ -148,7 +150,9 @@ describe('createYattServer bootstrap', () => {
       'Vas a crear un test YATT completo',
     );
     const esSchema = await clientEs.readResource({ uri: 'yatt://schema' });
-    expect(String(esSchema.contents[0].text)).toContain('# Formato de test de YATT');
+    expect(String((esSchema.contents[0] as { text: string }).text)).toContain(
+      '# Formato de test de YATT',
+    );
     await stop(handleEs, clientEs);
   });
 

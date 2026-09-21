@@ -48,7 +48,7 @@ function makeCtx(root: string, overrides: Record<string, unknown> = {}): Ctx {
 
 /** Spawn mock that also writes the outcome JSON the runner reads back. */
 function mockSpawnCli(): SpawnCli & { calls: Array<{ cmd: string; args: string[] }> } {
-  const calls: Array<{ cmd: string; args: string[] }> = {};
+  const calls: Array<{ cmd: string; args: string[] }> = [];
   const fn = (async (cmd, args, _options) => {
     (fn as any).calls ??= [];
     (fn as any).calls.push({ cmd, args });

@@ -103,7 +103,10 @@ function spawnHttpServe(extraArgs: string[], port: number): ServingHttp {
       return new Promise((resolveWait, rejectWait) => {
         const tick = (): void => {
           const match = output.match(pattern);
-          if (match) return resolveWait(match as unknown as RegExpMatchArray);
+          if (match) {
+            resolveWait();
+            return;
+          }
           if (Date.now() - started > timeoutMs) {
             return rejectWait(new Error(`timeout waiting for ${pattern} in stderr:\n${output}`));
           }

@@ -6,5 +6,6 @@
     "declarationMap": false,
     "rootDir": "."
   },
-  "include": ["src", "test", "examples", "vitest.config.ts"]
+  "include": ["src", "test", "examples", "vitest.config.ts"],
+  "exclude": ["examples/09-nestjs-mcp-handler.ts"]
 }

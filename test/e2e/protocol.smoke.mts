@@ -46,6 +46,8 @@ interface DbLike {
   run(sql: string, params?: readonly unknown[]): void;
   get(sql: string, params?: readonly unknown[]): Record<string, unknown> | null;
   all(sql: string, params?: readonly unknown[]): Record<string, unknown>[];
+  /** Executes a raw SQL statement (DDL/multi-statement). */
+  exec(sql: string): void;
   close(): void;
 }
 interface ServerHandleLike {
@@ -744,7 +746,9 @@ async function runProtocolSmoke(): Promise<number> {
       await handle.start(); // no transport → HTTP transport from config
       const base = `http://127.0.0.1:${port}/`;
 
-      const tryConnect = async (headers: Record<string, string>): Promise<{ ok: boolean; error: string }> => {
+      const tryConnect = async (
+        headers: Record<string, string>,
+      ): Promise<{ ok: boolean; error: string; client?: Client }> => {
         const transport = new StreamableHTTPClientTransport(new URL(base), { requestInit: { headers } });
         const c = new Client({ name: 'protocol-smoke-http', version: '0.1.0' });
         try {
@@ -772,7 +776,7 @@ async function runProtocolSmoke(): Promise<number> {
         const valid = await tryConnect({ Authorization: `Bearer ${token}` });
         check('HTTP with valid token accepted (C05/C06)', valid.ok, valid.error.slice(0, 80));
         if (valid.ok) {
-          const httpClient = (valid as { client: Client }).client;
+          const httpClient = valid.client!;
           const ping = await jsonOf(httpClient, 'ping');
           check(
             "ping reports 'deferred' when engine.enabled:false",
