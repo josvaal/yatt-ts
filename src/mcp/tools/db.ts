@@ -30,8 +30,10 @@ const READ_ONLY_RE = /^\s*(select|with|explain|pragma)\b/i;
  * `;` are skipped, so one or several TRAILING semicolons stay allowed).
  *
  * Known strictness, fail-closed on purpose: PostgreSQL dollar-quoted
- * strings ($$...$$) are not recognized — a `;` inside one is rejected.
- * Split such queries into separate db_query calls.
+ * strings ($$...$$), double-quoted identifiers containing `;` ("my;table")
+ * and E''-strings with backslash escapes are not recognized — a `;` inside
+ * one is rejected even though it is a single statement. Split such queries
+ * into separate db_query calls.
  */
 
 /**
