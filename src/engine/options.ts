@@ -58,8 +58,16 @@ export type SerializableAppDb =
  * Resolves the app-db config into a JSON-ready payload. `passwordProvider`
  * (sync or async) is awaited and inlined as `password`; the provider key
  * itself never crosses the process boundary.
+ *
+ * The `provider` arm (C41) is REFUSED here — a host function can never cross
+ * the process boundary (R4). Callers must skip serialization for it (the
+ * child simply receives no `YATT_APP_DB_JSON`); hitting this throw means an
+ * internal wiring bug (defensive guard, C51).
  */
 export async function serializeAppDb(appDb: ResolvedAppDb): Promise<SerializableAppDb> {
+  if (appDb.type === 'provider') {
+    throw new Error('provider appDb cannot be serialized to the engine process');
+  }
   if (appDb.type === 'sqlite') {
     return { type: 'sqlite', file: appDb.file };
   }

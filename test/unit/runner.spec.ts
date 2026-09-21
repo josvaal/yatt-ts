@@ -42,6 +42,7 @@ function makeCtx(root: string, overrides: Record<string, unknown> = {}): Ctx {
     policy: { readOnly: false, denyBehavior: 'error' },
     sidecar: null,
     queryAppDb: null,
+    appDbProvider: false,
     afterReportMutation: async () => ({ deleted: [] }),
   };
 }

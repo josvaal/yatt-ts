@@ -122,7 +122,10 @@ export async function buildRunEnv(
   extra: NodeJS.ProcessEnv = process.env,
 ): Promise<NodeJS.ProcessEnv> {
   const env: NodeJS.ProcessEnv = { ...extra, YATT_ROOT: root };
-  if (appDb) {
+  // The `provider` arm is host-process-only (C41/R4): a function cannot
+  // cross the process boundary, so the child gets NO app database at all
+  // (serializeAppDb would refuse it defensively).
+  if (appDb && appDb.type !== 'provider') {
     const payload: SerializableAppDb = await serializeAppDb(appDb);
     env.YATT_APP_DB_JSON = JSON.stringify(payload);
   }

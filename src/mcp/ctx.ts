@@ -40,6 +40,13 @@ export interface Ctx {
   /** App-database query implementation; `null` until the engine lands (T7). */
   queryAppDb: QueryAppDb | null;
   /**
+   * True when `config.appDb` is the `provider` arm (C41): `queryAppDb` runs
+   * the host's function IN THIS PROCESS, so the per-call `db` connection
+   * override has no meaning (C47) and the engine child has no app database
+   * for its `db_assert`/`db_wait` steps (C46).
+   */
+  appDbProvider: boolean;
+  /**
    * Joins/starts the report-retention pass after a report mutation (C29).
    * Fire-and-forget for tools; tests can await the returned promise. With no
    * retention configured it is a no-op (D16).

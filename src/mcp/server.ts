@@ -88,6 +88,12 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
     return retentionChain;
   };
 
+  // App-db mode (C41): the `provider` arm runs db_query IN THIS PROCESS via
+  // the host's function; nothing serializable exists to hand the engine
+  // child, which keeps serving the browser/run tools only (R4).
+  const providerAppDb = config.appDb?.type === 'provider' ? config.appDb : null;
+  const connectionAppDb = providerAppDb ? null : (config.appDb ?? null);
+
   // Engine wiring (T7): the client is constructed eagerly (cheap) but the
   // engine process only spawns on the first request. With `engine.enabled`
   // explicitly false the server runs engine-free (ping reports 'deferred').
@@ -100,7 +106,7 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
       readyTimeoutMs: config.engine.readyTimeoutMs,
       requestTimeoutMs: config.engine.requestTimeoutMs,
       closeGraceMs: config.engine.closeGraceMs,
-      appDb: config.appDb ?? null,
+      appDb: connectionAppDb,
       engineOptions: engineOptionsFromConfig(config),
     });
     sidecar = client;
@@ -113,6 +119,22 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
         params.db ? { sql: params.sql, db: params.db } : { sql: params.sql },
       );
   }
+  if (providerAppDb) {
+    // In-process adapter (C41; wins over the engine wiring for db_query):
+    // the provider returns the FULL rows array of row objects; shaping
+    // mirrors the engine's appdb.ts (columns from the first row, cells in
+    // column order, real count in totalRows) and db_query caps the output.
+    const provider = providerAppDb.provider;
+    queryAppDb = async ({ sql }) => {
+      const allRows = await provider(sql);
+      const columns = allRows.length > 0 ? Object.keys(allRows[0]) : [];
+      return {
+        columns,
+        rows: allRows.map((row) => columns.map((column) => row[column])),
+        totalRows: allRows.length,
+      };
+    };
+  }
 
   const ctx: Ctx = {
     config,
@@ -122,6 +144,7 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
     policy,
     sidecar,
     queryAppDb,
+    appDbProvider: providerAppDb !== null,
     afterReportMutation,
   };
 
@@ -160,6 +183,15 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
       console.error(message);
     }
   };
+
+  // C46: honest one-line notice (F11 style, stderr) about the process
+  // boundary — the provider covers db_query in this process, but the engine
+  // child's db_assert/db_wait steps still need sqlite/postgres appDb config.
+  if (config.engine.enabled && config.appDb?.type === 'provider') {
+    log(
+      'appDb provider covers the db_query tool in this process; test_run db_assert/db_wait steps run in the engine child and need sqlite/postgres appDb config',
+    );
+  }
 
   async function start(transport?: Transport): Promise<void> {
     if (started) throw new Error('yatt-ts server already started');

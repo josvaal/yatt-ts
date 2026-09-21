@@ -103,6 +103,7 @@ async function boot(opts: BootOptions = {}): Promise<Booted> {
     policy,
     sidecar,
     queryAppDb: null,
+    appDbProvider: false,
     afterReportMutation: (): Promise<RetentionResult> => Promise.resolve({ deleted: [] }),
   };
 
