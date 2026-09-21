@@ -29,6 +29,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
+import type { YattServer } from './server.js';
+
 /** Options for the shared session router. */
 export interface SessionRouterOptions {
   /**
@@ -268,5 +270,56 @@ export function createMcpSessionRouter(
       transports.clear();
       activeTransport = null;
     },
+  };
+}
+
+/** Public handle returned by `createMcpHttpHandler()`. */
+export interface McpHttpHandler {
+  /**
+   * Routes one HTTP request (POST/GET/DELETE, plus OPTIONS when `cors` is
+   * configured). `body` is the ALREADY-PARSED request body from the host
+   * framework (e.g. Express/Nest `req.body`); when omitted, the raw stream
+   * is read instead — so the same handler works mounted OR standalone.
+   */
+  handle(req: IncomingMessage, res: ServerResponse, body?: unknown): Promise<void>;
+  /** Live MCP sessions (one transport per session). */
+  sessionCount(): number;
+  /** Closes every live session. Call this BEFORE `yatt.shutdown()` on teardown. */
+  close(): Promise<void>;
+}
+
+/**
+ * Exposes an existing YattServer as a plain request handler mountable at
+ * ANY route/path of a host HTTP framework (NestJS controller, Express
+ * router, Fastify raw, plain node:http) — an alternative to the built-in
+ * server (`http.enabled`), with the exact same per-session semantics
+ * (F4/D23).
+ *
+ * Lifecycle (the EMBEDDER owns it):
+ *   - Do NOT call `yatt.start()` in handler mode: the handler manages
+ *     `server.connect()` per session itself, and `start()` would pick the
+ *     configured stdio/HTTP transport instead.
+ *   - On teardown call `handler.close()` first (closes all sessions), then
+ *     `yatt.shutdown()` (flushes and closes the store/engine).
+ *
+ * One MCP client at a time still holds per YattServer instance (D23): when
+ * a second client initializes, the stale session is evicted (new-wins).
+ */
+export function createMcpHttpHandler(
+  yatt: YattServer,
+  options: SessionRouterOptions = {},
+): McpHttpHandler {
+  // Same diagnostics channel as the built-in server: stderr, honoring the
+  // resolved logging config (silent → no output, never the protocol channel).
+  const log = (message: string): void => {
+    if (yatt.ctx.config.logging.level !== 'silent') {
+      console.error(message);
+    }
+  };
+  const router = createMcpSessionRouter({ server: yatt.server, log }, options);
+  return {
+    handle: (req, res, body) => router.handle(req, res, body),
+    sessionCount: () => router.sessionCount(),
+    close: () => router.close(),
   };
 }

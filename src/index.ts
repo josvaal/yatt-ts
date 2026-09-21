@@ -16,6 +16,8 @@ export type { Locale, PromptCopy, YattStrings } from './i18n/index.js';
 
 export { createYattServer } from './mcp/server.js';
 export type { YattServer } from './mcp/server.js';
+export { createMcpHttpHandler } from './mcp/http-handler.js';
+export type { McpHttpHandler, SessionRouterOptions } from './mcp/http-handler.js';
 export { PolicyDeniedError, createToolRegistrar } from './mcp/policy-middleware.js';
 export type { ToolDefinition, ToolHandler, ToolRegistrar } from './mcp/policy-middleware.js';
 export type { AppDbQueryParams, AppDbQueryResult, Ctx, QueryAppDb } from './mcp/ctx.js';
