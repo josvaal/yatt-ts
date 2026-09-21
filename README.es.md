@@ -86,11 +86,27 @@ Todo es opcional; las claves omitidas toman defaults. Las claves desconocidas se
 | `engine` | `enabled` (true), `runtime` ('auto' \| 'bun' \| 'node' \| ruta de binario), `autoInstallBrowser` (true), timeouts | El motor Playwright vendido. `enabled: false` corre sin motor (las tools browser/run/db fallan con error claro; `ping` reporta `'deferred'`). |
 | `browser` | `defaultHeadless` (true), `toolbarInjection` (false), `defaultViewport` (1280×800), `engine` ('chromium'), timeouts, `cdpSync` | Headless-first con soporte completo de capturas; la barra flotante está apagada salvo que la actives. |
 | `runner` | `defaultBrowser` ('chromium'), `stepTimeoutMs` (40000), `saveReport` (true) | Defaults de la corrida headless. |
-| `appDb` | `{ type: 'sqlite', file }` \| `{ type: 'postgres', host, port, user, password \| passwordProvider, database, ssl }` | La base de la app bajo prueba para `db_query` (solo lectura). Las credenciales viajan por env, nunca por argv; `passwordProvider` resuelve secretos en el momento de la llamada. |
+| `appDb` | `{ type: 'sqlite', file }` \| `{ type: 'postgres', host, port, user, password \| passwordProvider, database, ssl }` \| `{ type: 'provider', provider: (sql) => rows }` | La base de la app bajo prueba para `db_query` (solo lectura). Los brazos de conexión viajan al motor por env, nunca por argv; `passwordProvider` resuelve secretos en el momento de la llamada. El brazo `provider` ejecuta las consultas **en tu proceso** (ver abajo). |
 | `logging` | `level` ('info', o 'silent') | Los diagnósticos del servidor van a stderr (nunca al canal de protocolo). |
 | `locale` | `'en'` (default) \| `'es'` | Idioma de prompts, descripciones de tools y mensajes. |
 
 Valores inválidos (tipo incorrecto, ruta imposible, ambas formas de token, …) lanzan `ConfigError` en el arranque nombrando la clave exacta.
+
+### Provider de base de datos (embebido)
+
+Con `appDb: { type: 'provider', provider }`, la tool `db_query` ejecuta **en tu proceso** a través de tu propia función — típicamente un `DataSource` vivo de TypeORM/NestJS (su pool, sus credenciales, su posición de red). Funciona con `engine: { enabled: false }`:
+
+```ts
+const yatt = await createYattServer({
+  appDb: { type: 'provider', provider: (sql) => dataSource.query(sql) },
+});
+```
+
+El provider devuelve el array completo de filas (la forma nativa de TypeORM); yatt-ts aplica el guard de solo lectura (SELECT/WITH/EXPLAIN/PRAGMA — las sentencias rechazadas nunca llegan a tu función), el timeout de 30 s y el tope de 200 filas en la salida (`totalRows` conserva el conteo real). El override de conexión por llamada (`db`) no aplica en este modo.
+
+- **Usá igualmente un rol de BD de solo lectura** — yatt-ts controla el SQL, pero el nivel de privilegio es tuyo (defensa en profundidad).
+- **Frontera honesta**: los pasos `db_assert`/`db_wait` del runner headless se ejecutan en el proceso hijo del motor, que no puede llamar a una función del host. Con config solo-provider esas corridas se rechazan con un mensaje claro; configurá `appDb` sqlite/postgres para usarlas. Se registra un aviso de una línea al arrancar.
+- Receta completa NestJS + TypeORM: [`examples/10-typeorm-provider.ts`](./examples/10-typeorm-provider.ts).
 
 ## Notas de seguridad
 
@@ -101,7 +117,7 @@ Valores inválidos (tipo incorrecto, ruta imposible, ambas formas de token, …)
 
 Los ejemplos de permisos, sesiones, retención y conexión están en [`examples/`](./examples) — cada uno es un archivo autocontenido y ejecutable:
 
-`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object` · `09-nestjs-mcp-handler`
+`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object` · `09-nestjs-mcp-handler` · `10-typeorm-provider`
 
 ## Integración en tu framework HTTP (NestJS)
 

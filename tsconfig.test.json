@@ -7,5 +7,5 @@
     "rootDir": "."
   },
   "include": ["src", "test", "examples", "vitest.config.ts"],
-  "exclude": ["examples/09-nestjs-mcp-handler.ts"]
+  "exclude": ["examples/09-nestjs-mcp-handler.ts", "examples/10-typeorm-provider.ts"]
 }

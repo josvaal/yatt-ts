@@ -86,11 +86,27 @@ Everything is optional; omitted keys take defaults. Unknown keys are rejected wi
 | `engine` | `enabled` (true), `runtime` ('auto' \| 'bun' \| 'node' \| binary path), `autoInstallBrowser` (true), timeouts | The vendored Playwright engine. `enabled: false` runs engine-free (browser/run/db tools fail clearly; `ping` reports `'deferred'`). |
 | `browser` | `defaultHeadless` (true), `toolbarInjection` (false), `defaultViewport` (1280×800), `engine` ('chromium'), timeouts, `cdpSync` | Headless-first with full screenshot support; floating toolbar OFF unless you turn it on. |
 | `runner` | `defaultBrowser` ('chromium'), `stepTimeoutMs` (40000), `saveReport` (true) | Headless run defaults. |
-| `appDb` | `{ type: 'sqlite', file }` \| `{ type: 'postgres', host, port, user, password \| passwordProvider, database, ssl }` | The app-under-test database for `db_query` (read-only). Credentials travel via env, never argv; `passwordProvider` resolves secrets at call time. |
+| `appDb` | `{ type: 'sqlite', file }` \| `{ type: 'postgres', host, port, user, password \| passwordProvider, database, ssl }` \| `{ type: 'provider', provider: (sql) => rows }` | The app-under-test database for `db_query` (read-only). Connection arms travel to the engine via env, never argv; `passwordProvider` resolves secrets at call time. The `provider` arm runs queries **in your process** (see below). |
 | `logging` | `level` ('info', or 'silent') | Server diagnostics go to stderr (never the protocol channel). |
 | `locale` | `'en'` (default) \| `'es'` | Language for prompts, tool descriptions, and messages. |
 
 Invalid values (wrong type, impossible path, both token forms, …) throw `ConfigError` at boot naming the exact key.
+
+### App database provider (embedding)
+
+With `appDb: { type: 'provider', provider }` the `db_query` tool executes **in your process** through your own function — typically a live TypeORM/NestJS `DataSource` (its pool, its credentials, its network position). Works with `engine: { enabled: false }`:
+
+```ts
+const yatt = await createYattServer({
+  appDb: { type: 'provider', provider: (sql) => dataSource.query(sql) },
+});
+```
+
+The provider returns the full rows array (TypeORM's native shape); yatt-ts applies the read-only guard (SELECT/WITH/EXPLAIN/PRAGMA — rejected statements never reach your function), the 30 s timeout and the 200-row output cap (`totalRows` keeps the real count). The per-call `db` connection override does not apply in this mode.
+
+- **Still use a read-only DB role** — yatt-ts guards the SQL, but the privilege level is yours (defense in depth).
+- **Honest boundary**: the headless runner's `db_assert`/`db_wait` steps execute in the engine child process, which cannot call a host function. With a provider-only config those runs are rejected with a clear message; configure sqlite/postgres `appDb` for them. A one-line notice is logged at startup.
+- Full NestJS + TypeORM recipe: [`examples/10-typeorm-provider.ts`](./examples/10-typeorm-provider.ts).
 
 ## Security notes
 
@@ -101,7 +117,7 @@ Invalid values (wrong type, impossible path, both token forms, …) throw `Confi
 
 Permission, session, retention, and connection examples live in [`examples/`](./examples) — each one is a runnable, self-contained file:
 
-`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object` · `09-nestjs-mcp-handler`
+`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object` · `09-nestjs-mcp-handler` · `10-typeorm-provider`
 
 ## Embed in your HTTP framework (NestJS)
 

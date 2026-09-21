@@ -17,6 +17,9 @@
  *      on a tiny raw node:http route `/mcp` (C39: the export works from the
  *      packed build — no express needed in the consumer), complete a full
  *      initialize + ping through it, terminate the session and close.
+ *      FINALLY boot a third server with `appDb: { type: 'provider' }` — a
+ *      plain JS function in the consumer — and prove db_query returns the
+ *      consumer's own rows (C50).
  *   4. Bun consumer: second tmp dir → `bun install <tgz>` → import VERSION +
  *      resolve a config (dual-runtime packaging proof, C23).
  *   5. Clean up every tmp dir. Exits non-zero on any failure.
@@ -188,6 +191,51 @@ await mcp.close();
 await httpHandle.shutdown();
 httpServer.closeAllConnections?.();
 await new Promise((resolve) => httpServer.close(resolve));
+
+// 3) appDb provider proof (C50): the host supplies its own query function
+//    (plain JS in the fresh consumer) and db_query executes through it.
+const providerCalls = [];
+const providerHandle = await createYattServer({
+  paths: { root: ${JSON.stringify(join(consumerDir, 'data-provider'))} },
+  engine: { enabled: false },
+  appDb: {
+    type: 'provider',
+    provider: async (sql) => {
+      providerCalls.push(sql);
+      return [{ id: 1, note: 'from-host-provider' }];
+    },
+  },
+});
+const [pServerT, pClientT] = InMemoryTransport.createLinkedPair();
+const providerClient = new Client({ name: 'consumer-provider', version: '0.0.0' });
+await Promise.all([providerHandle.start(pServerT), providerClient.connect(pClientT)]);
+const dbOut = JSON.parse(
+  (
+    await providerClient.callTool({
+      name: 'db_query',
+      arguments: { sql: 'SELECT id, note FROM notes' },
+    })
+  ).content[0].text,
+);
+if (providerCalls.length !== 1 || providerCalls[0] !== 'SELECT id, note FROM notes') {
+  console.error('provider did not receive the verbatim SQL:', JSON.stringify(providerCalls));
+  process.exit(1);
+}
+if (dbOut.totalRows !== 1 || dbOut.rows[0][1] !== 'from-host-provider') {
+  console.error('unexpected db_query output:', JSON.stringify(dbOut));
+  process.exit(1);
+}
+const denied = await providerClient.callTool({
+  name: 'db_query',
+  arguments: { sql: 'DELETE FROM notes' },
+});
+if (denied.isError !== true || !JSON.stringify(denied).includes('read-only')) {
+  console.error('read-only guard missing in provider mode');
+  process.exit(1);
+}
+console.log('NODE CONSUMER OK — appDb provider serves db_query from the host function (read-only enforced)');
+await providerClient.close();
+await providerHandle.shutdown();
 `,
   );
   const res = run('node', ['consumer.mjs'], { cwd: consumerDir, capture: true, allowFailure: true });
@@ -242,7 +290,7 @@ function main() {
     // ---- 3. Node consumer ----
     const nodeResult = nodeConsumerCheck(tgz, consumerNode);
     check(
-      'node consumer: install + boot + ping + raw-http handler roundtrip (C24, C39)',
+      'node consumer: install + boot + ping + raw-http handler + appDb provider db_query (C24, C39, C50)',
       nodeResult.ok,
       nodeResult.detail,
     );
