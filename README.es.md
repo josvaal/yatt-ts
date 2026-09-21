@@ -101,16 +101,37 @@ Valores inválidos (tipo incorrecto, ruta imposible, ambas formas de token, …)
 
 Los ejemplos de permisos, sesiones, retención y conexión están en [`examples/`](./examples) — cada uno es un archivo autocontenido y ejecutable:
 
-`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object`
+`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object` · `09-nestjs-mcp-handler`
+
+## Integración en tu framework HTTP (NestJS)
+
+En lugar del servidor HTTP integrado (`http.enabled`), podés exponer el endpoint MCP en **cualquier ruta de tu propio framework HTTP** — NestJS, Express, Fastify, `node:http` crudo — con `createMcpHttpHandler`:
+
+```ts
+import { createYattServer, createMcpHttpHandler } from 'yatt-ts';
+
+const yatt = await createYattServer({ engine: { enabled: false } });
+const mcp = createMcpHttpHandler(yatt);
+
+// Cualquier ruta de tu framework (controlador Nest, router Express, …):
+app.use('/api/mcp', (req, res) => mcp.handle(req, res, req.body));
+```
+
+- **Cuándo usar cada uno**: `http.enabled` para un endpoint MCP independiente que manejás de punta a punta; el handler cuando un backend existente debe alojarlo (middleware compartido, TLS, despliegue).
+- **El ciclo de vida es tuyo**: NO llames a `yatt.start()` en modo handler (el handler conecta el servidor MCP por sesión él mismo); al apagar, llamá primero `mcp.close()` y después `yatt.shutdown()`.
+- **Auth con guards del host**: sin auth por default — mandan los guards/middleware de tu framework. O pasá `authenticate: (req) => boolean` (`false` → 401 JSON, throw → 500 controlado).
+- **Un cliente por vez** por servidor (un solo motor de navegador): cuando un segundo cliente inicializa, la sesión vieja se desaloja (new-wins).
+- Receta NestJS completa (controller + service + bearer guard): [`examples/09-nestjs-mcp-handler.ts`](./examples/09-nestjs-mcp-handler.ts).
 
 ## API pública
 
 ```ts
 import {
-  createYattServer,   // (config?) → { server, ctx, start(transport?), shutdown() }
-  resolveConfig,      // validar y aplicar defaults por tu cuenta
-  ConfigError,        // errores de configuración que nombran la clave
-  generateToken,      // token de 64 hex criptográficamente seguro
+  createYattServer,     // (config?) → { server, ctx, start(transport?), shutdown() }
+  createMcpHttpHandler, // monta el endpoint MCP dentro de tu propio framework HTTP
+  resolveConfig,        // validar y aplicar defaults por tu cuenta
+  ConfigError,          // errores de configuración que nombran la clave
+  generateToken,        // token de 64 hex criptográficamente seguro
   verifyToken, hashToken, redact,
   evaluateToolAccess, isToolListed,
   applyReportRetention,

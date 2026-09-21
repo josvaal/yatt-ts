@@ -101,16 +101,37 @@ Invalid values (wrong type, impossible path, both token forms, …) throw `Confi
 
 Permission, session, retention, and connection examples live in [`examples/`](./examples) — each one is a runnable, self-contained file:
 
-`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object`
+`01-zero-config-stdio` · `02-http-with-token` · `03-read-only-server` · `04-deny-list` · `05-ephemeral-sessions` · `06-custom-paths` · `07-report-retention` · `08-appdb-postgres-object` · `09-nestjs-mcp-handler`
+
+## Embed in your HTTP framework (NestJS)
+
+Instead of the built-in HTTP server (`http.enabled`), you can expose the MCP endpoint at **any route of your own HTTP framework** — NestJS, Express, Fastify, plain `node:http` — with `createMcpHttpHandler`:
+
+```ts
+import { createYattServer, createMcpHttpHandler } from 'yatt-ts';
+
+const yatt = await createYattServer({ engine: { enabled: false } });
+const mcp = createMcpHttpHandler(yatt);
+
+// Any framework route (Nest controller, Express router, …):
+app.use('/api/mcp', (req, res) => mcp.handle(req, res, req.body));
+```
+
+- **When to use which**: `http.enabled` for a standalone MCP endpoint you own end-to-end; the handler when an existing backend should host it (shared middleware, TLS, deployment).
+- **Lifecycle is yours**: do NOT call `yatt.start()` in handler mode (the handler connects the MCP server per session itself); on teardown call `mcp.close()` first, then `yatt.shutdown()`.
+- **Auth via host guards**: no auth by default — your framework's guards/middleware rule. Or pass `authenticate: (req) => boolean` (`false` → 401 JSON, throw → controlled 500).
+- **One client at a time** per server (single browser engine): when a second client initializes, the stale session is evicted (new-wins).
+- Full NestJS recipe (controller + service + bearer guard): [`examples/09-nestjs-mcp-handler.ts`](./examples/09-nestjs-mcp-handler.ts).
 
 ## Public API
 
 ```ts
 import {
-  createYattServer,   // (config?) → { server, ctx, start(transport?), shutdown() }
-  resolveConfig,      // validate + apply defaults yourself
-  ConfigError,        // named-key config failures
-  generateToken,      // crypto-secure 64-hex token
+  createYattServer,     // (config?) → { server, ctx, start(transport?), shutdown() }
+  createMcpHttpHandler, // mount the MCP endpoint inside your own HTTP framework
+  resolveConfig,        // validate + apply defaults yourself
+  ConfigError,          // named-key config failures
+  generateToken,        // crypto-secure 64-hex token
   verifyToken, hashToken, redact,
   evaluateToolAccess, isToolListed,
   applyReportRetention,

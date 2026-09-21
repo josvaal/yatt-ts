@@ -13,7 +13,10 @@
  *      does NOT ship src/ or test/.
  *   3. Node consumer: tmp dir → `npm install <tgz>` → boot createYattServer
  *      from the installed package (tmp root, engine disabled, fast) → ping
- *      over an in-memory transport → ok.
+ *      over an in-memory transport → ok. THEN mount `createMcpHttpHandler`
+ *      on a tiny raw node:http route `/mcp` (C39: the export works from the
+ *      packed build — no express needed in the consumer), complete a full
+ *      initialize + ping through it, terminate the session and close.
  *   4. Bun consumer: second tmp dir → `bun install <tgz>` → import VERSION +
  *      resolve a config (dual-runtime packaging proof, C23).
  *   5. Clean up every tmp dir. Exits non-zero on any failure.
@@ -75,10 +78,12 @@ function nodeConsumerCheck(tgz, consumerDir) {
   writeFileSync(
     join(consumerDir, 'consumer.mjs'),
     `// Fresh-consumer proof: everything imported from the INSTALLED package.
-import { createYattServer, VERSION } from 'yatt-ts';
+import { createMcpHttpHandler, createYattServer, VERSION } from 'yatt-ts';
+import { createServer as createHttpServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
+// 1) Boot + in-memory ping (kept from the original proof).
 const handle = await createYattServer({
   paths: { root: ${JSON.stringify(join(consumerDir, 'data'))} },
   engine: { enabled: false }, // fast: no Chromium needed for this check
@@ -100,6 +105,89 @@ if (VERSION !== '0.1.0') {
 console.log('NODE CONSUMER OK — installed yatt-ts boots and pings');
 await client.close();
 await handle.shutdown();
+
+// 2) HTTP handler embedding proof (C39): mount createMcpHttpHandler on a
+//    tiny raw node:http route /mcp, initialize + ping through it, terminate
+//    the session, close. Proves the export ships in the packed build.
+const httpHandle = await createYattServer({
+  paths: { root: ${JSON.stringify(join(consumerDir, 'data-http'))} },
+  engine: { enabled: false },
+});
+const mcp = createMcpHttpHandler(httpHandle);
+const httpServer = createHttpServer((req, res) => {
+  if (req.url === '/mcp') {
+    void mcp.handle(req, res);
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'not found' }));
+});
+await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+const mcpUrl = 'http://127.0.0.1:' + httpServer.address().port + '/mcp';
+const JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  Accept: 'application/json, text/event-stream',
+};
+
+const init = await fetch(mcpUrl, {
+  method: 'POST',
+  headers: JSON_HEADERS,
+  body: JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      clientInfo: { name: 'consumer', version: '0.0.0' },
+    },
+  }),
+});
+if (!init.ok) {
+  console.error('handler initialize failed:', init.status);
+  process.exit(1);
+}
+const session = init.headers.get('mcp-session-id');
+if (!session) {
+  console.error('no mcp-session-id from the mounted handler');
+  process.exit(1);
+}
+
+/** Extracts the JSON-RPC payload out of a JSON or SSE body. */
+const payloadOf = async (res) => {
+  const raw = await res.text();
+  return JSON.parse(raw.startsWith('{') ? raw : /^data: (.*)$/m.exec(raw)?.[1] ?? '{}');
+};
+
+const pingRes = await fetch(mcpUrl, {
+  method: 'POST',
+  headers: { ...JSON_HEADERS, 'mcp-session-id': session },
+  body: JSON.stringify({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: { name: 'ping', arguments: {} },
+  }),
+});
+const pingJson = JSON.parse((await payloadOf(pingRes)).result?.content?.[0]?.text ?? '{}');
+if (pingJson.ok !== true || pingJson.engine !== 'deferred') {
+  console.error('unexpected handler ping:', JSON.stringify(pingJson));
+  process.exit(1);
+}
+console.log('NODE CONSUMER OK — createMcpHttpHandler serves initialize + ping over raw node:http');
+
+const term = await fetch(mcpUrl, {
+  method: 'DELETE',
+  headers: { 'mcp-session-id': session },
+});
+if (!term.ok) {
+  console.error('handler session DELETE failed:', term.status);
+  process.exit(1);
+}
+await mcp.close();
+await httpHandle.shutdown();
+httpServer.closeAllConnections?.();
+await new Promise((resolve) => httpServer.close(resolve));
 `,
   );
   const res = run('node', ['consumer.mjs'], { cwd: consumerDir, capture: true, allowFailure: true });
@@ -153,7 +241,11 @@ function main() {
 
     // ---- 3. Node consumer ----
     const nodeResult = nodeConsumerCheck(tgz, consumerNode);
-    check('node consumer: install + boot + in-memory ping (C24)', nodeResult.ok, nodeResult.detail);
+    check(
+      'node consumer: install + boot + ping + raw-http handler roundtrip (C24, C39)',
+      nodeResult.ok,
+      nodeResult.detail,
+    );
 
     // ---- 4. Bun consumer ----
     const bunResult = bunConsumerCheck(tgz, consumerBun);
