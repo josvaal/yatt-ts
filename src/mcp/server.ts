@@ -17,9 +17,7 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 import { resolveConfig, type ResolvedConfig, type YattConfig } from '../config/index.js';
 import { engineOptionsFromConfig } from '../engine/options.js';
@@ -28,6 +26,7 @@ import { redact, verifyToken, type ToolPolicy } from '../security/index.js';
 import { applyReportRetention, createSessionSink, Store, type RetentionResult } from '../store/index.js';
 import { VERSION } from '../version.js';
 import type { AppDbQueryResult, Ctx, QueryAppDb } from './ctx.js';
+import { createMcpSessionRouter, type McpSessionRouter } from './http-handler.js';
 import { SidecarClient } from './sidecar-client.js';
 import { registerPrompts } from './prompts.js';
 import { createToolRegistrar } from './policy-middleware.js';
@@ -148,9 +147,9 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
   let started = false;
   let shutDown = false;
   let httpServer: HttpServer | null = null;
-  /** Live HTTP session transports (F4): tracked per session so a clean
-   *  disconnect evicts its own entry only, and shutdown closes them all. */
-  const httpTransports = new Map<string, StreamableHTTPServerTransport>();
+  /** Shared per-session HTTP router (F4): created by `startHttp()` and closed
+   *  by `shutdown()` — it owns the session transport map. */
+  let httpRouter: McpSessionRouter | null = null;
 
   const onSignal = () => {
     void shutdown();
@@ -195,171 +194,34 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
     }
 
     /**
-     * F4: one transport PER SESSION instead of a single shared one.
-     * Previously a lone transport was created at startup and its `onclose`
-     * triggered a FULL server shutdown, so the first clean client disconnect
-     * killed the server and every later `initialize` answered 400 "Server
-     * already initialized". Now each `initialize` POST builds its own
-     * transport, live ones are tracked by session id, and a close only
-     * evicts its own entry. One client at a time still holds for the engine
-     * surface (D23): engine calls are serialized by the sidecar chain.
+     * C06: bearer auth as the router's `authenticate` gate. Every
+     * non-OPTIONS request must present a valid token; failures answer 401
+     * JSON and never leak the token (only a redacted hint reaches the
+     * diagnostics log).
      */
-    let activeTransport: StreamableHTTPServerTransport | null = null;
-
-    const connectTransport = async (
-      transport: StreamableHTTPServerTransport,
-    ): Promise<void> => {
-      try {
-        await server.connect(transport);
-      } catch {
-        // The SDK allows ONE transport attached at a time. A client that
-        // vanished without a DELETE leaves a stale one attached ("wedges
-        // after crash"); evict it and attach the newcomer.
-        if (activeTransport && activeTransport !== transport) {
-          await activeTransport.close().catch(() => {});
-          await server.connect(transport);
-        } else {
-          throw new Error('server transport already attached and no stale session to evict');
-        }
-      }
-      activeTransport = transport;
-    };
-
-    const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
-      new Promise((resolveBody, rejectBody) => {
-        const chunks: Buffer[] = [];
-        req.on('data', (chunk: Buffer) => chunks.push(chunk));
-        req.on('end', () => {
-          const raw = Buffer.concat(chunks).toString('utf8');
-          if (!raw.trim()) {
-            resolveBody(undefined);
-            return;
-          }
-          try {
-            resolveBody(JSON.parse(raw));
-          } catch {
-            rejectBody(new Error('parse error: invalid JSON body'));
-          }
-        });
-        req.on('error', rejectBody);
-      });
-
-    const sessionOf = (req: IncomingMessage): StreamableHTTPServerTransport | undefined => {
-      const id = req.headers['mcp-session-id'];
-      return typeof id === 'string' ? httpTransports.get(id) : undefined;
-    };
-
-    const noSession = (res: import('node:http').ServerResponse): void => {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          error: { code: -32000, message: 'Bad Request: no valid MCP session (initialize first)' },
-          id: null,
-        }),
+    const bearerCheck = (req: IncomingMessage): boolean => {
+      if (!auth) return true;
+      const header = req.headers.authorization ?? '';
+      const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+      if (presented && verifyToken(presented, auth)) return true;
+      log(
+        `[yatt-ts] rejected unauthorized request (presented token: ${presented ? redact(presented) : 'none'})`,
       );
+      return false;
     };
+
+    // The shared session core (http-handler.ts) owns the per-session
+    // transport map, new-wins eviction and the POST/GET/DELETE routing;
+    // the 500 catch lives inside the router too, so the observable
+    // responses of the built-in server are unchanged.
+    const router = createMcpSessionRouter(
+      { server, log },
+      { authenticate: bearerCheck, cors: { origins: corsOrigins } },
+    );
+    httpRouter = router;
 
     httpServer = createHttpServer((req, res) => {
-      // Permissive-by-default CORS like the base tool, honoring the configured
-      // origin list: '*' keeps the wildcard behavior; otherwise the origin is
-      // echoed only when listed (browsers then block the rest).
-      const origin = req.headers.origin;
-      const allowOrigin = corsOrigins.includes('*')
-        ? '*'
-        : origin && corsOrigins.includes(origin)
-          ? origin
-          : undefined;
-      if (allowOrigin) res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-      res.setHeader(
-        'Access-Control-Allow-Headers',
-        'Content-Type, MCP-Protocol-Version, Mcp-Session-Id, Authorization',
-      );
-      if (req.method === 'OPTIONS') {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-
-      // C06: bearer auth. Every non-OPTIONS request must present a valid
-      // token; failures answer 401 JSON and never leak the token (only a
-      // redacted hint reaches the diagnostics log).
-      if (auth) {
-        const header = req.headers.authorization ?? '';
-        const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
-        if (!presented || !verifyToken(presented, auth)) {
-          log(
-            `[yatt-ts] rejected unauthorized request (presented token: ${presented ? redact(presented) : 'none'})`,
-          );
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'unauthorized' }));
-          return;
-        }
-      }
-
-      void (async () => {
-        if (req.method === 'POST') {
-          let body: unknown;
-          try {
-            body = await readJsonBody(req);
-          } catch (err) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(
-              JSON.stringify({
-                jsonrpc: '2.0',
-                error: {
-                  code: -32700,
-                  message: err instanceof Error ? err.message : 'Parse error',
-                },
-                id: null,
-              }),
-            );
-            return;
-          }
-          if (isInitializeRequest(body)) {
-            const transport = new StreamableHTTPServerTransport({
-              sessionIdGenerator: () => crypto.randomUUID(),
-              onsessioninitialized: (sessionId) => {
-                httpTransports.set(sessionId, transport);
-              },
-            });
-            // A clean disconnect (DELETE / transport close) evicts ONLY this
-            // session; the server keeps serving everyone else and future
-            // clients initialize again without "already initialized" errors.
-            transport.onclose = () => {
-              const id = transport.sessionId;
-              if (id) httpTransports.delete(id);
-              if (activeTransport === transport) activeTransport = null;
-            };
-            await connectTransport(transport);
-            await transport.handleRequest(req, res, body);
-            return;
-          }
-          const transport = sessionOf(req);
-          if (!transport) {
-            noSession(res);
-            return;
-          }
-          await transport.handleRequest(req, res, body);
-          return;
-        }
-        // GET (standalone SSE) and DELETE (terminate session) are session-bound.
-        const transport = sessionOf(req);
-        if (!transport) {
-          noSession(res);
-          return;
-        }
-        await transport.handleRequest(req, res);
-      })().catch((err) => {
-        log(`[yatt-ts] HTTP request failed: ${err instanceof Error ? err.message : String(err)}`);
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'internal error' }));
-        } else {
-          res.end();
-        }
-      });
+      void router.handle(req, res);
     });
 
     await listen();
@@ -384,15 +246,16 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
 
-    // F4: close EVERY live HTTP session transport (not just the attached one),
-    // then the server itself. Closing a transport fires its onclose, which
-    // evicts its own map entry — safe against the removal below.
-    for (const transport of [...httpTransports.values()]) {
-      await transport.close().catch(() => {
-        /* already closed */
-      });
+    // F4: close EVERY live HTTP session transport via the shared router
+    // (not just the attached one), then the server itself. Closing a
+    // transport fires its onclose, which evicts its own map entry — safe
+    // against the clear inside close().
+    try {
+      await httpRouter?.close();
+    } catch {
+      /* already closed */
     }
-    httpTransports.clear();
+    httpRouter = null;
     try {
       await server.close();
     } catch {
