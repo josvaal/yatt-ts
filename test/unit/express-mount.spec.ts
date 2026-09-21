@@ -2,8 +2,8 @@
  * Express mount e2e (T4): the handler embedded in a REAL framework router —
  * express as the stand-in for Nest's default platform adapter.
  *
- * Chooses express ^4 on purpose: NestJS's @nestjs/platform-express has been
- * built on express 4 historically, so this is the closest published analog
+ * Express 4 for the widest compatibility; the mount contract is identical
+ * on express 5 (NestJS 11 ships it). This is the closest published analog
  * of a Nest controller route (`app.use('/api/mcp', …)` with `req.body`
  * already parsed by the framework). Always-on and Chromium-free
  * (engine.enabled: false).

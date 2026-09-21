@@ -118,7 +118,7 @@ app.use('/api/mcp', (req, res) => mcp.handle(req, res, req.body));
 ```
 
 - **When to use which**: `http.enabled` for a standalone MCP endpoint you own end-to-end; the handler when an existing backend should host it (shared middleware, TLS, deployment).
-- **Lifecycle is yours**: do NOT call `yatt.start()` in handler mode (the handler connects the MCP server per session itself); on teardown call `mcp.close()` first, then `yatt.shutdown()`.
+- **Lifecycle is yours**: do NOT call `yatt.start()` in handler mode (the handler connects the MCP server per session itself); on teardown call `mcp.close()` first, then `yatt.shutdown()`. In a Nest app call `app.enableShutdownHooks()` — without it Nest never fires `onModuleDestroy` on SIGINT/SIGTERM, so graceful teardown never runs.
 - **Auth via host guards**: no auth by default — your framework's guards/middleware rule. Or pass `authenticate: (req) => boolean` (`false` → 401 JSON, throw → controlled 500).
 - **One client at a time** per server (single browser engine): when a second client initializes, the stale session is evicted (new-wins).
 - Full NestJS recipe (controller + service + bearer guard): [`examples/09-nestjs-mcp-handler.ts`](./examples/09-nestjs-mcp-handler.ts).

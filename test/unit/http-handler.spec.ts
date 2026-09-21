@@ -27,6 +27,7 @@ import {
   type McpHttpHandler,
   type YattServer,
 } from '../../src/index.js';
+import { generateToken } from '../../src/security/token.js';
 import { jsonOf, makeTmpRoot, textOf } from './helpers/mcp.js';
 
 const JSON_HEADERS = {
@@ -300,6 +301,14 @@ describe('createMcpHttpHandler', () => {
       const after = await postJson(url, session!, { id: 2, method: 'tools/list', params: {} });
       expect(after.status).toBe(400);
 
+      // F5 (race cover): an initialize synthesized AFTER close() must not
+      // register a transport — the closed flag skips onsessioninitialized.
+      // The SDK answers its own deterministic 404 ('Session not found') for
+      // an initialize whose transport was closed mid-initialization.
+      const lateInit = await fetch(url, { method: 'POST', headers: JSON_HEADERS, body: INIT_BODY });
+      expect(lateInit.status).toBe(404);
+      expect(handler.sessionCount()).toBe(0);
+
       // Full teardown completes and the store is on disk (process can exit).
       await unmount(server);
       await handler.close(); // idempotent second call
@@ -338,6 +347,175 @@ describe('createMcpHttpHandler', () => {
 
       client.close();
       await teardown(handler, yatt, server);
+    },
+    20000,
+  );
+
+  it(
+    'defaults authenticate to the configured yatt auth; an explicit hook wins (F1)',
+    async () => {
+      const token = generateToken();
+
+      // (a) auth config + NO hook: the handler applies the same bearer
+      // check as the built-in server (401 JSON without it, proceed with it).
+      const yattAuth = await createYattServer({
+        paths: { root: makeTmpRoot('yatt-ts-handler-auth-') },
+        engine: { enabled: false },
+        auth: { token },
+      });
+      const authed = createMcpHttpHandler(yattAuth);
+      const authedMount = await mount(authed);
+      const denied = await fetch(authedMount.url, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: INIT_BODY,
+      });
+      expect(denied.status).toBe(401);
+      expect(await denied.json()).toEqual({ error: 'unauthorized' });
+      expect(authed.sessionCount()).toBe(0);
+      const granted = await fetch(authedMount.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+        body: INIT_BODY,
+      });
+      expect(granted.status).toBe(200);
+      expect(granted.headers.get('mcp-session-id')).toBeTruthy();
+      expect(authed.sessionCount()).toBe(1);
+      await teardown(authed, yattAuth, authedMount.server);
+
+      // (b) auth config + explicit hook: the hook WINS — it lets a request
+      // WITHOUT any bearer pass (e.g. the host moved auth to a guard).
+      const yattHook = await createYattServer({
+        paths: { root: makeTmpRoot('yatt-ts-handler-auth-hook-') },
+        engine: { enabled: false },
+        auth: { token },
+      });
+      let hookCalls = 0;
+      const hooked = createMcpHttpHandler(yattHook, {
+        authenticate: () => {
+          hookCalls += 1;
+          return true;
+        },
+      });
+      const hookedMount = await mount(hooked);
+      const bearerless = await fetch(hookedMount.url, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: INIT_BODY,
+      });
+      expect(bearerless.status).toBe(200);
+      expect(bearerless.headers.get('mcp-session-id')).toBeTruthy();
+      expect(hookCalls).toBe(1);
+      await teardown(hooked, yattHook, hookedMount.server);
+
+      // (c) no auth config + no hook: unchanged — the host owns auth, the
+      // request proceeds without any bearer (GATE 1).
+      const yattOpen = await createYattServer({
+        paths: { root: makeTmpRoot('yatt-ts-handler-auth-open-') },
+        engine: { enabled: false },
+      });
+      const open = createMcpHttpHandler(yattOpen);
+      const openMount = await mount(open);
+      const anonymous = await fetch(openMount.url, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: INIT_BODY,
+      });
+      expect(anonymous.status).toBe(200);
+      expect(anonymous.headers.get('mcp-session-id')).toBeTruthy();
+      await teardown(open, yattOpen, openMount.server);
+    },
+    20000,
+  );
+
+  it(
+    'CORS opt-in: allowed preflight echoes origin + 204; disallowed gets no ACAO; without cors OPTIONS routes on (F6)',
+    async () => {
+      // Opt-in cors: preflight answers 204 with the ECHOED allowed origin.
+      const yattCors = await createYattServer({
+        paths: { root: makeTmpRoot('yatt-ts-handler-cors-') },
+        engine: { enabled: false },
+      });
+      const corsed = createMcpHttpHandler(yattCors, { cors: { origins: ['https://ok.example'] } });
+      const corsMount = await mount(corsed);
+      const preflight = await fetch(corsMount.url, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://ok.example', 'Access-Control-Request-Method': 'POST' },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe('https://ok.example');
+      expect(preflight.headers.get('access-control-allow-methods')).toBe(
+        'GET, POST, DELETE, OPTIONS',
+      );
+      expect(preflight.headers.get('access-control-allow-headers')).toContain('Authorization');
+
+      // Disallowed origin: NO ACAO echo (the browser enforces the block);
+      // the short-circuit itself still answers 204 without the header.
+      const stranger = await fetch(corsMount.url, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://no.example', 'Access-Control-Request-Method': 'POST' },
+      });
+      expect(stranger.status).toBe(204);
+      expect(stranger.headers.get('access-control-allow-origin')).toBeNull();
+      await teardown(corsed, yattCors, corsMount.server);
+
+      // WITHOUT the cors option: no ACAO anywhere and OPTIONS is NOT
+      // short-circuited — it falls through to routing as a session-bound
+      // method and answers the deterministic 400 no-session.
+      const yattPlain = await createYattServer({
+        paths: { root: makeTmpRoot('yatt-ts-handler-plain-') },
+        engine: { enabled: false },
+      });
+      const plain = createMcpHttpHandler(yattPlain);
+      const plainMount = await mount(plain);
+      const plainOptions = await fetch(plainMount.url, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://ok.example' },
+      });
+      expect(plainOptions.status).toBe(400);
+      expect((await payloadOf(plainOptions)).error?.message).toContain('no valid MCP session');
+      expect(plainOptions.headers.get('access-control-allow-origin')).toBeNull();
+      await teardown(plain, yattPlain, plainMount.server);
+    },
+    20000,
+  );
+
+  it(
+    'caps raw bodies at maxBodyBytes with 413; the 2MB default leaves normal bodies untouched (F7)',
+    async () => {
+      // Raw mount with a tiny cap: the oversized standalone POST answers
+      // 413 JSON and leaves no session behind.
+      const yattSmall = await createYattServer({
+        paths: { root: makeTmpRoot('yatt-ts-handler-cap-') },
+        engine: { enabled: false },
+      });
+      const small = createMcpHttpHandler(yattSmall, { maxBodyBytes: 64 });
+      const smallMount = await mount(small);
+      const tooBig = await fetch(smallMount.url, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: INIT_BODY,
+      });
+      expect(tooBig.status).toBe(413);
+      expect(await tooBig.json()).toEqual({ error: 'payload too large' });
+      expect(small.sessionCount()).toBe(0);
+      await teardown(small, yattSmall, smallMount.server);
+
+      // Handler default (2MB): a normal body sails through unaffected.
+      const yattDefault = await createYattServer({
+        paths: { root: makeTmpRoot('yatt-ts-handler-capdef-') },
+        engine: { enabled: false },
+      });
+      const defaulted = createMcpHttpHandler(yattDefault);
+      const defaultMount = await mount(defaulted);
+      const within = await fetch(defaultMount.url, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: INIT_BODY,
+      });
+      expect(within.status).toBe(200);
+      expect(within.headers.get('mcp-session-id')).toBeTruthy();
+      await teardown(defaulted, yattDefault, defaultMount.server);
     },
     20000,
   );

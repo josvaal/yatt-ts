@@ -30,6 +30,21 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 import type { YattServer } from './server.js';
+import { redact, verifyToken } from '../security/index.js';
+
+/** Default raw-body cap applied by `createMcpHttpHandler` (≈2 MB, F7). */
+const DEFAULT_MAX_BODY_BYTES = 2_000_000;
+
+/**
+ * F7: raised by the raw body reader when the accumulated stream exceeds
+ * `maxBodyBytes`. Internal only — consumers see the 413 HTTP response.
+ */
+class BodyTooLargeError extends Error {
+  constructor() {
+    super('payload too large');
+    this.name = 'BodyTooLargeError';
+  }
+}
 
 /** Options for the shared session router. */
 export interface SessionRouterOptions {
@@ -51,6 +66,17 @@ export interface SessionRouterOptions {
   cors?: { origins: string[] };
   /** Session id factory (defaults to `crypto.randomUUID()`). */
   sessionIdGenerator?: () => string;
+  /**
+   * F7: cap in bytes for the RAW body path (the standalone read of the
+   * request stream). When the accumulated body exceeds it the request
+   * answers 413 JSON `{ error: 'payload too large' }` and further data is
+   * not consumed. The framework-parsed path (`body` third argument) is
+   * unaffected — the host body parser owns that limit. Absent = no cap:
+   * the built-in server passes nothing (legacy behavior unchanged), while
+   * `createMcpHttpHandler` defaults it to 2_000_000 unless the host
+   * overrides.
+   */
+  maxBodyBytes?: number;
 }
 
 /** The shared per-session HTTP routing surface. */
@@ -84,6 +110,9 @@ export function createMcpSessionRouter(
    *  disconnect evicts its own entry only, and close() closes them all. */
   const transports = new Map<string, StreamableHTTPServerTransport>();
   let activeTransport: StreamableHTTPServerTransport | null = null;
+  /** F5: set once close() starts — an initialize still in flight must not
+   *  register its transport into the just-cleared map. */
+  let closed = false;
 
   /**
    * F4: one transport PER SESSION instead of a single shared one. The SDK
@@ -113,8 +142,21 @@ export function createMcpSessionRouter(
   const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
     new Promise((resolveBody, rejectBody) => {
       const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      let received = 0;
+      let tooLarge = false;
+      req.on('data', (chunk: Buffer) => {
+        // F7: past the cap nothing more is consumed or accumulated.
+        if (tooLarge) return;
+        received += chunk.length;
+        if (options.maxBodyBytes !== undefined && received > options.maxBodyBytes) {
+          tooLarge = true;
+          rejectBody(new BodyTooLargeError());
+          return;
+        }
+        chunks.push(chunk);
+      });
       req.on('end', () => {
+        if (tooLarge) return;
         const raw = Buffer.concat(chunks).toString('utf8');
         if (!raw.trim()) {
           resolveBody(undefined);
@@ -206,6 +248,12 @@ export function createMcpSessionRouter(
           try {
             parsed = await readJsonBody(req);
           } catch (err) {
+            if (err instanceof BodyTooLargeError) {
+              // F7: capped body → 413 JSON, no further consumption.
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'payload too large' }));
+              return;
+            }
             parseError(res, err);
             return;
           }
@@ -214,6 +262,14 @@ export function createMcpSessionRouter(
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator,
             onsessioninitialized: (sessionId) => {
+              // F5: an initialize still in flight when close() ran must not
+              // leak a transport into the cleared map — drop it immediately.
+              if (closed) {
+                void transport.close().catch(() => {
+                  /* already closed */
+                });
+                return;
+              }
               transports.set(sessionId, transport);
             },
           });
@@ -259,6 +315,8 @@ export function createMcpSessionRouter(
     handle,
     sessionCount: () => transports.size,
     async close(): Promise<void> {
+      // F5: from here on, in-flight initializes must not register.
+      closed = true;
       // Same loop as the built-in server's shutdown: closing a transport
       // fires its onclose, which evicts its own map entry — safe against
       // the removal below.
@@ -316,7 +374,36 @@ export function createMcpHttpHandler(
       console.error(message);
     }
   };
-  const router = createMcpSessionRouter({ server: yatt.server, log }, options);
+
+  // F1: handler mode is auth-free BY DEFAULT (the host framework's guards
+  // rule — GATE 1). But when the host configured yatt auth AND supplied no
+  // `authenticate` hook, silently ignoring that config would be surprising:
+  // wire the same bearer check the built-in server uses ('Bearer <token>'
+  // header, 401 JSON on failure, redacted log line) and say so exactly once.
+  let routerOptions: SessionRouterOptions = options;
+  const auth = yatt.ctx.config.auth;
+  if (!options.authenticate && auth) {
+    log('using yatt auth.token/auth.tokenHash as the handler authenticate (pass options.authenticate to override)');
+    routerOptions = {
+      ...options,
+      authenticate: (req: IncomingMessage): boolean => {
+        const header = req.headers.authorization ?? '';
+        const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+        if (presented && verifyToken(presented, auth)) return true;
+        log(
+          `[yatt-ts] rejected unauthorized request (presented token: ${presented ? redact(presented) : 'none'})`,
+        );
+        return false;
+      },
+    };
+  }
+
+  // F7: safe-by-default for the new standalone exposure — cap the raw body
+  // path at ~2 MB unless the host overrides. The built-in server passes
+  // nothing, so its legacy behavior is untouched (zero observable change).
+  routerOptions = { maxBodyBytes: DEFAULT_MAX_BODY_BYTES, ...routerOptions };
+
+  const router = createMcpSessionRouter({ server: yatt.server, log }, routerOptions);
   return {
     handle: (req, res, body) => router.handle(req, res, body),
     sessionCount: () => router.sessionCount(),

@@ -12,8 +12,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +27,11 @@ import { join } from 'node:path';
 async function loadDist() {
   try {
     const pkg = await import(/* @vite-ignore */ new URL('../../dist/index.js', import.meta.url).href);
-    return { createYattServer: pkg.createYattServer, resolveConfig: pkg.resolveConfig };
+    return {
+      createYattServer: pkg.createYattServer,
+      createMcpHttpHandler: pkg.createMcpHttpHandler,
+      resolveConfig: pkg.resolveConfig,
+    };
   } catch (error) {
     throw new Error(
       `the compiled package (dist/) is missing or broken — run "npm run build" before the browser e2e. Original error: ${
@@ -247,5 +253,60 @@ e2e('browser smoke (T9)', () => {
       }
     },
     180000,
+  );
+});
+
+/**
+ * F8: the HTTP handler path with the ENGINE ENABLED (the default) — C37's
+ * engine clause and the C38 interplay proven over real HTTP: the embedded
+ * engine spawns for browser_open through a createMcpHttpHandler route and
+ * the whole teardown (handler.close() → yatt.shutdown()) resolves without
+ * hanging (no lingering engine process).
+ */
+e2e('http handler with engine enabled (F8)', () => {
+  it(
+    'SDK client over node:http → browser_open/close → close()+shutdown() resolves without hanging',
+    async () => {
+      const { createYattServer, createMcpHttpHandler, resolveConfig } = await loadDist();
+      const root = mkdtempSync(join(tmpdir(), 'yatt-ts-handler-engine-e2e-'));
+      const { server: pageServer, url } = await startServer();
+      const yatt = await createYattServer(resolveConfig({ paths: { root } }));
+      const handler = createMcpHttpHandler(yatt);
+      const httpServer = createServer((req, res) => {
+        void handler.handle(req, res);
+      });
+      await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', () => resolve()));
+      const { port } = httpServer.address() as AddressInfo;
+      const mcpUrl = `http://127.0.0.1:${port}/api/mcp`;
+
+      const transport = new StreamableHTTPClientTransport(new URL(mcpUrl));
+      const client = new Client({ name: 'handler-engine-e2e', version: '0.0.0' });
+      await client.connect(transport);
+
+      try {
+        // Engine-ENABLED default: browser_open really spawns the engine
+        // and Chromium (headless default) through the mounted handler.
+        expect(jsonOf(await call(client, 'browser_open', { url })).ok).toBe(true);
+        expect(jsonOf(await call(client, 'browser_close'))).toEqual({ ok: true, open: false });
+      } finally {
+        client.close();
+        // The assert: full teardown RESOLVES (no lingering engine, no hung
+        // handles) — guarded so a hang fails the test instead of the run.
+        const closed = (async () => {
+          await handler.close();
+          await yatt.shutdown();
+        })();
+        await Promise.race([
+          closed,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('handler teardown hung (>20s)')), 20000),
+          ),
+        ]);
+        await closed; // surface any rejection from the teardown itself
+        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+        await new Promise<void>((resolve) => pageServer.close(() => resolve()));
+      }
+    },
+    120000,
   );
 });

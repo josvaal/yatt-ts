@@ -22,7 +22,8 @@
  *     handler manages `server.connect()` per MCP session itself, so
  *     `yatt.start()` is NOT called (and must NOT be called) in this mode.
  *   - Teardown: `onModuleDestroy` closes the handler first (all sessions),
- *     then the server (flush + store + engine).
+ *     then the server (flush + store + engine). Requires
+ *     `app.enableShutdownHooks()` in main.ts (see the snippet at the bottom).
  *   - Body: the framework already parsed the JSON body (`req.body`), so it
  *     is passed as the third argument — the raw stream is never re-read.
  *   - Auth: Nest guards run BEFORE the controller method, so a guard is the
@@ -100,12 +101,12 @@ export class McpService implements OnModuleInit, OnModuleDestroy {
 
   /** Bridges one Nest route into the MCP handler. */
   handle(request: Request, response: Response): void {
-    // Nest's default adapter is Express: `request` IS the http.IncomingMessage.
-    // The `raw ?? request` form also fits the Fastify adapter, where the raw
-    // request is `request.raw` (with Fastify you would reply via `reply.raw`).
+    // EXPRESS ADAPTER ONLY (Nest's default): `request` IS the
+    // http.IncomingMessage and `response` IS the http.ServerResponse, so
+    // both pass through to the handler unchanged. Other adapters wrap these
+    // objects (e.g. Fastify's reply) and are NOT covered by this recipe.
     // `request.body` is already parsed by the framework → third argument.
-    const raw = (request as Request & { raw?: Request }).raw ?? request;
-    void this.handler.handle(raw, response, request.body);
+    void this.handler.handle(request, response, request.body);
   }
 }
 
@@ -146,6 +147,9 @@ export class AppModule {}
  *
  *   async function bootstrap(): Promise<void> {
  *     const app = await NestFactory.create(AppModule);
+ *     // Without this, Nest never fires onModuleDestroy on SIGINT/SIGTERM —
+ *     // handler.close() and yatt.shutdown() would never run.
+ *     app.enableShutdownHooks();
  *     await app.listen(3000);
  *   }
  *   void bootstrap();
