@@ -316,6 +316,8 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
     datasetSummary: (rows, columns) => `${rows} filas × ${columns} columnas`,
     duplicateSuffix: '(copia)',
     dbReadOnly: () => 'db: solo lectura (SELECT/WITH/EXPLAIN/PRAGMA)',
+    dbMultipleStatements:
+      'no se admiten múltiples sentencias SQL en una sola llamada a db_query',
     dbEngineRequired:
       'la consulta a la base de la app requiere el motor, no disponible en esta configuración del servidor',
     dbQueryTimeout: (timeoutMs) => `db: la consulta excedió el tiempo de espera (${timeoutMs} ms)`,

@@ -30,6 +30,8 @@ export interface YattMessages {
   /** Default name suffix for test_duplicate ("<name> (copy)"). */
   duplicateSuffix: string;
   dbReadOnly: () => string;
+  /** Stacked SQL statements in one db_query call (F1: connection-mode parity). */
+  dbMultipleStatements: string;
   dbEngineRequired: string;
   dbQueryTimeout: (timeoutMs: number) => string;
   /** Per-call `db` override while the appDb mode is `provider` (C47). */

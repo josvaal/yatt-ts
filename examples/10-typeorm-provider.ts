@@ -26,6 +26,11 @@
  *     into this host function. With a provider-only config those runs are
  *     rejected with a clear message; configure `appDb` as sqlite/postgres
  *     (in addition to, or instead of, the provider) if you need db steps.
+ *   - TIMEOUT NOTE: after the 30 s tool timeout yatt-ts stops WAITING but
+ *     CANNOT cancel the query already handed to this provider (a JS
+ *     limitation) — the statement keeps running on your DataSource pool.
+ *     Set a host-side limit (PostgreSQL statement_timeout or a pool-level
+ *     query timeout) so abandoned queries cannot pile up.
  *
  * SECURITY — defense in depth: yatt-ts enforces the read-only guard BEFORE
  * your function runs, but the DB privilege level is YOURS to own. Connect

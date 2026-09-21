@@ -31,7 +31,7 @@ import { SidecarClient } from './sidecar-client.js';
 import { registerPrompts } from './prompts.js';
 import { createToolRegistrar } from './policy-middleware.js';
 import { registerResources } from './resources.js';
-import { registerDbTools } from './tools/db.js';
+import { registerDbTools, ROW_CAP } from './tools/db.js';
 import { registerBrowserTools } from './tools/browser.js';
 import { registerMetaTools } from './tools/meta.js';
 import { registerReportTools } from './tools/reports.js';
@@ -126,12 +126,23 @@ export async function createYattServer(input?: YattConfig): Promise<YattServer> 
     // column order, real count in totalRows) and db_query caps the output.
     const provider = providerAppDb.provider;
     queryAppDb = async ({ sql }) => {
-      const allRows = await provider(sql);
-      const columns = allRows.length > 0 ? Object.keys(allRows[0]) : [];
+      const result = await provider(sql);
+      // F2 (review round): a non-array return used to crash downstream with
+      // a raw TypeError — fail with the provider contract error instead.
+      if (!Array.isArray(result)) {
+        throw new Error(
+          `appDb provider must return an array of row objects (got ${typeof result})`,
+        );
+      }
+      // F5 (review round): memory parity with the engine's appdb.ts
+      // shape() — count ALL rows, map only the first ROW_CAP, so a huge
+      // result no longer allocates a mapped array for the discarded tail.
+      // Output is byte-identical to capping after the map.
+      const columns = result.length > 0 ? Object.keys(result[0]) : [];
       return {
         columns,
-        rows: allRows.map((row) => columns.map((column) => row[column])),
-        totalRows: allRows.length,
+        rows: result.slice(0, ROW_CAP).map((row) => columns.map((column) => row[column])),
+        totalRows: result.length,
       };
     };
   }

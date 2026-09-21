@@ -104,6 +104,8 @@ const yatt = await createYattServer({
 
 El provider devuelve el array completo de filas (la forma nativa de TypeORM); yatt-ts aplica el guard de solo lectura (SELECT/WITH/EXPLAIN/PRAGMA — las sentencias rechazadas nunca llegan a tu función), el timeout de 30 s y el tope de 200 filas en la salida (`totalRows` conserva el conteo real). El override de conexión por llamada (`db`) no aplica en este modo.
 
+**Advertencia de timeout**: cuando vence el timeout de 30 s, yatt-ts deja de esperar pero no puede cancelar la consulta ya entregada a tu provider — JavaScript no ofrece forma de abortar la llamada del host, así que la sentencia sigue corriendo en tu pool. Configurá tu propio límite del lado del host (p. ej. `statement_timeout` de PostgreSQL o un timeout de query a nivel de pool) para que las consultas abandonadas no se acumulen.
+
 - **Usá igualmente un rol de BD de solo lectura** — yatt-ts controla el SQL, pero el nivel de privilegio es tuyo (defensa en profundidad).
 - **Frontera honesta**: los pasos `db_assert`/`db_wait` del runner headless se ejecutan en el proceso hijo del motor, que no puede llamar a una función del host. Con config solo-provider esas corridas se rechazan con un mensaje claro; configurá `appDb` sqlite/postgres para usarlas. Se registra un aviso de una línea al arrancar.
 - Receta completa NestJS + TypeORM: [`examples/10-typeorm-provider.ts`](./examples/10-typeorm-provider.ts).

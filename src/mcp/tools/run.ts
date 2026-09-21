@@ -14,54 +14,92 @@ import type { ToolRegistrar } from '../policy-middleware.js';
 import { coerceOverrides, text } from './tests.js';
 
 /**
- * Recursively scans a step tree for `db_assert`/`db_wait` leaves (C46):
- * those steps execute in the engine child process, which can never call back
- * into the host's appDb provider — including steps nested inside structural
- * blocks (if/repeat/for_each children, elseChildren).
+ * Bound of run_flow-referenced tests the C46 pre-flight will scan (review
+ * round F3): a pathological (or machine-generated) reference graph cannot
+ * make the pre-flight unbounded. References beyond the bound are left to
+ * the runner, which fails them in the child with the generic no-connection
+ * error — the same tradeoff as a missing test.
  */
-function containsDbStep(step: Record<string, unknown>): boolean {
-  if (step.action === 'db_assert' || step.action === 'db_wait') return true;
-  for (const key of ['children', 'elseChildren']) {
-    const nested = step[key];
-    if (
-      Array.isArray(nested) &&
-      nested.some(
-        (child) =>
-          !!child &&
-          typeof child === 'object' &&
-          containsDbStep(child as Record<string, unknown>),
-      )
-    ) {
-      return true;
+const MAX_SCANNED_TESTS = 25;
+
+/**
+ * Recursively scans a step tree for `db_assert`/`db_wait` leaves (C46):
+ * those steps execute in the engine child process, which can never call
+ * back into the host's appDb provider. That includes steps nested inside
+ * structural blocks (if/repeat/for_each children, elseChildren) AND, since
+ * review round F3, inside run_flow-referenced sub-tests: the runner resolves
+ * those by NAME at run time, so the pre-flight follows the same edges via
+ * `resolveFlow`. `visited` (by test name, seeded with the top-level test)
+ * stops reference cycles and `scanned` enforces MAX_SCANNED_TESTS.
+ */
+function containsDbStep(
+  steps: unknown[],
+  resolveFlow: (name: string) => unknown[] | null,
+  visited: Set<string>,
+  scanned: { count: number },
+): boolean {
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const s = step as Record<string, unknown>;
+    if (s.action === 'db_assert' || s.action === 'db_wait') return true;
+    for (const key of ['children', 'elseChildren']) {
+      const nested = s[key];
+      if (
+        Array.isArray(nested) &&
+        containsDbStep(nested, resolveFlow, visited, scanned)
+      ) {
+        return true;
+      }
+    }
+    if (s.action === 'run_flow' && typeof s.flow === 'string') {
+      const flowName = s.flow.trim();
+      if (!flowName || visited.has(flowName) || scanned.count >= MAX_SCANNED_TESTS) {
+        continue; // cycles/bound/unresolvable → the runner owns the outcome
+      }
+      scanned.count += 1;
+      visited.add(flowName);
+      const flowSteps = resolveFlow(flowName);
+      if (flowSteps && containsDbStep(flowSteps, resolveFlow, visited, scanned)) {
+        return true;
+      }
     }
   }
   return false;
 }
 
 /**
+ * Steps of a saved test for the pre-flight scan. `null` = missing, invalid
+ * JSON or a non-array `steps` — all left to the runner's own errors, same
+ * as before F3.
+ */
+function stepsOfTest(store: Ctx['store'], name: string): unknown[] | null {
+  const raw = store.testGet(name);
+  if (!raw) return null;
+  try {
+    const steps = (JSON.parse(raw) as { steps?: unknown }).steps;
+    return Array.isArray(steps) ? steps : null;
+  } catch {
+    return null; // malformed docs fail later in the engine with their own error
+  }
+}
+
+/**
  * C46 pre-flight: with a provider-only appDb, a saved test that contains
  * database steps is rejected BEFORE spawning the engine child (which would
- * only fail later with a generic no-connection error). Missing or malformed
+ * only fail later with a generic no-connection error). The scan follows
+ * run_flow references into saved sub-tests (F3). Missing or malformed
  * tests are left to the runner's own errors.
  */
 function assertEngineCanRunDbSteps(ctx: Ctx, strings: YattStrings, name: string): void {
   if (ctx.config.appDb?.type !== 'provider') return;
-  const raw = ctx.store.testGet(name);
-  if (!raw) return;
-  let steps: unknown;
-  try {
-    steps = (JSON.parse(raw) as { steps?: unknown }).steps;
-  } catch {
-    return; // malformed docs fail later in the engine with their own error
-  }
-  const hasDbStep =
-    Array.isArray(steps) &&
-    steps.some(
-      (step) =>
-        !!step &&
-        typeof step === 'object' &&
-        containsDbStep(step as Record<string, unknown>),
-    );
+  const steps = stepsOfTest(ctx.store, name);
+  if (!steps) return;
+  const hasDbStep = containsDbStep(
+    steps,
+    (flowName) => stepsOfTest(ctx.store, flowName),
+    new Set([name]),
+    { count: 0 },
+  );
   if (hasDbStep) {
     throw new Error(strings.messages.dbAssertNeedsConnection(name));
   }

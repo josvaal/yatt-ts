@@ -312,6 +312,8 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
     datasetSummary: (rows, columns) => `${rows} rows × ${columns} columns`,
     duplicateSuffix: '(copy)',
     dbReadOnly: () => 'db: read-only (SELECT/WITH/EXPLAIN/PRAGMA)',
+    dbMultipleStatements:
+      'multiple SQL statements are not supported in one db_query call',
     dbEngineRequired:
       'app database query requires the engine, not available in this server configuration',
     dbQueryTimeout: (timeoutMs) => `db: query timed out after ${timeoutMs} ms`,
