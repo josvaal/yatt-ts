@@ -19,8 +19,8 @@ const READ_ONLY_RE = /^\s*(select|with|explain|pragma)\b/i;
 /** Cap of returned rows (totalRows keeps the real count). */
 const ROW_CAP = 200;
 
-/** Request timeout of the base tool (30 s). */
-const DB_QUERY_TIMEOUT_MS = 30000;
+/** Request timeout of the base tool (30 s); wraps `ctx.queryAppDb` (C44). */
+export const DB_QUERY_TIMEOUT_MS = 30000;
 
 export function registerDbTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStrings): void {
   const msg = strings.messages;
@@ -40,6 +40,12 @@ export function registerDbTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStrin
       const { sql, db } = raw as { sql: string; db?: string };
       if (!READ_ONLY_RE.test(sql)) {
         throw new Error(msg.dbReadOnly());
+      }
+      // C47: the per-call connection override only makes sense for
+      // engine-managed connections; in provider mode the host function IS
+      // the one connection, so reject instead of silently ignoring it.
+      if (db && ctx.appDbProvider) {
+        throw new Error(msg.dbOverrideProviderOnly);
       }
       const result = await withTimeout(
         ctx.queryAppDb({ sql, db }),

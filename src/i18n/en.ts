@@ -315,6 +315,10 @@ Deliverable: green saved tests, sessions per user, and a summary of what each on
     dbEngineRequired:
       'app database query requires the engine, not available in this server configuration',
     dbQueryTimeout: (timeoutMs) => `db: query timed out after ${timeoutMs} ms`,
+    dbOverrideProviderOnly:
+      'the per-call db override only applies to engine-managed connections (sqlite/postgres appDb)',
+    dbAssertNeedsConnection: (name) =>
+      `test "${name}" contains db_assert/db_wait steps, which run in the engine child process and cannot use the in-process appDb provider; configure appDb as sqlite or postgres to run them`,
     runTestMissing: (name) => `test "${name}" is not saved (create it with test_create first)`,
     runFailedNoReport: (tail) => `the run failed without a report: ${tail}`,
     engineRequired:

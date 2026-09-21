@@ -32,6 +32,10 @@ export interface YattMessages {
   dbReadOnly: () => string;
   dbEngineRequired: string;
   dbQueryTimeout: (timeoutMs: number) => string;
+  /** Per-call `db` override while the appDb mode is `provider` (C47). */
+  dbOverrideProviderOnly: string;
+  /** test_run of a test with db steps while the appDb mode is `provider` (C46). */
+  dbAssertNeedsConnection: (name: string) => string;
   /** Saved-test mirror missing at run time (runner). */
   runTestMissing: (name: string) => string;
   /** The CLI died without writing the outcome JSON (runner). */

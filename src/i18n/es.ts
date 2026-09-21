@@ -319,6 +319,10 @@ Entrega: tests verdes guardados, sesiones por usuario, y un resumen de qué cubr
     dbEngineRequired:
       'la consulta a la base de la app requiere el motor, no disponible en esta configuración del servidor',
     dbQueryTimeout: (timeoutMs) => `db: la consulta excedió el tiempo de espera (${timeoutMs} ms)`,
+    dbOverrideProviderOnly:
+      'el override de conexión por llamada (db) solo aplica a conexiones administradas por el motor (appDb sqlite/postgres)',
+    dbAssertNeedsConnection: (name) =>
+      `el test "${name}" contiene pasos db_assert/db_wait, que corren en el proceso hijo del motor y no pueden usar el provider appDb en-proceso; configurá appDb como sqlite o postgres para ejecutarlos`,
     runTestMissing: (name) => `el test "${name}" no está guardado (crealo con test_create primero)`,
     runFailedNoReport: (tail) => `la corrida falló sin reporte: ${tail}`,
     engineRequired:

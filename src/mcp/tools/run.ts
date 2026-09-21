@@ -13,6 +13,60 @@ import { runTestDataset, runTestHeadless } from '../run.js';
 import type { ToolRegistrar } from '../policy-middleware.js';
 import { coerceOverrides, text } from './tests.js';
 
+/**
+ * Recursively scans a step tree for `db_assert`/`db_wait` leaves (C46):
+ * those steps execute in the engine child process, which can never call back
+ * into the host's appDb provider — including steps nested inside structural
+ * blocks (if/repeat/for_each children, elseChildren).
+ */
+function containsDbStep(step: Record<string, unknown>): boolean {
+  if (step.action === 'db_assert' || step.action === 'db_wait') return true;
+  for (const key of ['children', 'elseChildren']) {
+    const nested = step[key];
+    if (
+      Array.isArray(nested) &&
+      nested.some(
+        (child) =>
+          !!child &&
+          typeof child === 'object' &&
+          containsDbStep(child as Record<string, unknown>),
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * C46 pre-flight: with a provider-only appDb, a saved test that contains
+ * database steps is rejected BEFORE spawning the engine child (which would
+ * only fail later with a generic no-connection error). Missing or malformed
+ * tests are left to the runner's own errors.
+ */
+function assertEngineCanRunDbSteps(ctx: Ctx, strings: YattStrings, name: string): void {
+  if (ctx.config.appDb?.type !== 'provider') return;
+  const raw = ctx.store.testGet(name);
+  if (!raw) return;
+  let steps: unknown;
+  try {
+    steps = (JSON.parse(raw) as { steps?: unknown }).steps;
+  } catch {
+    return; // malformed docs fail later in the engine with their own error
+  }
+  const hasDbStep =
+    Array.isArray(steps) &&
+    steps.some(
+      (step) =>
+        !!step &&
+        typeof step === 'object' &&
+        containsDbStep(step as Record<string, unknown>),
+    );
+  if (hasDbStep) {
+    throw new Error(strings.messages.dbAssertNeedsConnection(name));
+  }
+}
+
 export function registerRunTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStrings): void {
   const args = strings.args;
   const msg = strings.messages;
@@ -41,6 +95,8 @@ export function registerRunTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStri
         url?: string;
         saveReport?: boolean;
       };
+      // C46: provider-only appDb cannot serve the engine child's db steps.
+      assertEngineCanRunDbSteps(ctx, strings, a.name);
       const summary = await runTestHeadless(
         ctx,
         {
@@ -80,6 +136,7 @@ export function registerRunTools(reg: ToolRegistrar, ctx: Ctx, strings: YattStri
         browser?: 'chromium' | 'firefox' | 'webkit';
       };
       const rows = a.rows.map(coerceOverrides);
+      assertEngineCanRunDbSteps(ctx, strings, a.name);
       const result = await runTestDataset(ctx, {
         name: a.name,
         rows,
