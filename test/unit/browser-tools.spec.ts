@@ -465,6 +465,42 @@ describe('policy on browser tools (D5/D6, C07/C08)', () => {
     expect(textOf(nested)).toContain('read-only');
   });
 
+  it('read-only rejects capture_screenshot hidden in if/elseChildren with the policy reason (F7 scan branch)', async () => {
+    const { client } = await boot({ readOnly: true });
+    await call(client, 'browser_open');
+
+    const denied = await call(client, 'browser_run_step', {
+      step: {
+        action: 'if',
+        selector: '#name',
+        children: [{ action: 'wait', selector: '#name' }],
+        elseChildren: [{ action: 'capture_screenshot', value: 'smuggled-else' }],
+      },
+    });
+    expect(denied.isError).toBe(true);
+    expect(textOf(denied)).toContain('capture_screenshot');
+    expect(textOf(denied)).toContain('read-only');
+
+    // Control: the SAME structural step on a NON-readOnly server reaches the
+    // engine untouched (the elseChildren scan is read-only-only policy).
+    const control = await boot();
+    await call(control.client, 'browser_open');
+    const allowed = await call(control.client, 'browser_run_step', {
+      step: {
+        action: 'if',
+        selector: '#name',
+        children: [{ action: 'wait', selector: '#name' }],
+        elseChildren: [{ action: 'capture_screenshot', value: 'smuggled-else' }],
+      },
+    });
+    expect(allowed.isError).toBeUndefined();
+    expect(jsonOf(allowed)).toMatchObject({ name: 'if', ok: true });
+    const record = await engineRecord(control.sidecar!);
+    expect(record.lastRunStep.step.elseChildren).toEqual([
+      { action: 'capture_screenshot', value: 'smuggled-else' },
+    ]);
+  });
+
   it('non-readOnly still allows capture_screenshot through to the engine (F7)', async () => {
     const { client, sidecar } = await boot();
     await call(client, 'browser_open');

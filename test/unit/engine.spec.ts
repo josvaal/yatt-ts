@@ -18,8 +18,11 @@ import {
 } from '../../src/mcp/sidecar-client.js';
 import { engineOptionsFromConfig } from '../../src/engine/options.js';
 import { resolveConfig } from '../../src/config/index.js';
+import { appDbQuery, initAppDb } from '../../src/engine/appdb.js';
+import { executeLeaf } from '../../src/engine/engine.js';
 import { DEFAULT_ENGINE_OPTIONS, enginePaths, initEngine, initEngineFromEnv } from '../../src/engine/state.js';
 import type { SidecarEvent } from '../../src/mcp/sidecar-types.js';
+import type { Page } from 'playwright';
 
 const PKG_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const FIXTURES = join(PKG_ROOT, 'test', 'fixtures');
@@ -172,6 +175,35 @@ describe('initEngineFromEnv path overrides (F1/C11)', () => {
       },
       DEFAULT_ENGINE_OPTIONS,
     );
+  });
+});
+
+/**
+ * F8 parity (limitation 3b): the db_* steps' "no app db" guidance
+ * (engine.ts requireAppDb) must stay byte-identical to the canonical error
+ * thrown by appdb.ts's appDbQuery, so both failure paths give the same help.
+ */
+describe('requireAppDb ↔ appdb.ts canonical message parity (F8)', () => {
+  it('db_assert without an app db fails with the EXACT canonical appdb.ts message', async () => {
+    // Guarantee "not configured" for this module graph before either path runs.
+    initAppDb(null);
+
+    const outcome = await executeLeaf(
+      {} as unknown as Page, // db_assert validates the app db before any page use
+      { action: 'db_assert', sql: 'SELECT 1' },
+      {},
+      { context: null, getCurrent: () => null, setCurrent: () => {} },
+    );
+    expect(outcome.ok).toBe(false);
+
+    const canonical = await appDbQuery('SELECT 1').then(
+      () => {
+        throw new Error('appDbQuery should have failed with no configured source');
+      },
+      (err: unknown) => (err as Error).message,
+    );
+    expect(outcome.error).toBe(canonical);
+    expect(outcome.error).toContain('define YATT_APP_DB');
   });
 });
 

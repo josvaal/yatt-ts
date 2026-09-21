@@ -1,9 +1,10 @@
 /**
  * Server bootstrap spec (T5): createYattServer resolution, resources,
  * prompts/i18n, store location, auth misconfig and HTTP bearer auth.
- * Covers C01 (partial: client connects), C03, C05, C06, C28.
+ * Covers C01 (partial: client connects), C03, C05, C06, C28, plus the F4
+ * stale-transport eviction branch and the F11 HTTP-without-auth warning.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { existsSync, mkdtempSync } from 'node:fs';
@@ -236,6 +237,73 @@ describe('createYattServer bootstrap', () => {
     }
   }, 30000);
 
+  it('evicts a stale attached transport: B initializes after A vanished WITHOUT DELETE (F4 new-wins branch)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'yatt-ts-http-stale-'));
+    const port = 30000 + Math.floor(Math.random() * 20000);
+    const token = generateToken();
+    const handle = await createYattServer({
+      paths: { root },
+      engine: { enabled: false },
+      http: { enabled: true, port },
+      auth: { token },
+    });
+    await handle.start();
+
+    const url = `http://127.0.0.1:${port}/`;
+    const authHeaders = { ...JSON_HEADERS, Authorization: `Bearer ${token}` };
+
+    /** Extracts the JSON-RPC payload out of a JSON or SSE body. */
+    const payloadOf = async (res: Response): Promise<any> => {
+      const raw = await res.text();
+      const text = raw.startsWith('{') ? raw : /^data: (.*)$/m.exec(raw)?.[1] ?? '{}';
+      return JSON.parse(text);
+    };
+    const listTools = (session: string, id: number): Promise<Response> =>
+      fetch(url, {
+        method: 'POST',
+        headers: { ...authHeaders, 'mcp-session-id': session },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list', params: {} }),
+      });
+
+    try {
+      // Client A initializes over HTTP and STAYS ATTACHED — no DELETE, exactly
+      // like a client that crashed without a clean disconnect.
+      const initA = await fetch(url, { method: 'POST', headers: authHeaders, body: INIT_BODY });
+      expect(initA.status).toBe(200);
+      const sessionA = initA.headers.get('mcp-session-id');
+      expect(sessionA).toBeTruthy();
+
+      // Client B initializes on the SAME server: the SDK rejects the second
+      // attach and the new-wins path evicts A's stale transport, so B still
+      // gets a fresh session instead of a wedge.
+      const initB = await fetch(url, { method: 'POST', headers: authHeaders, body: INIT_BODY });
+      expect(initB.status).toBe(200);
+      const sessionB = initB.headers.get('mcp-session-id');
+      expect(sessionB).toBeTruthy();
+      expect(sessionB).not.toBe(sessionA);
+
+      // B's session actually routes: tools/list answers inside it.
+      const listB1 = await listTools(sessionB!, 2);
+      expect(listB1.status).toBe(200);
+      expect((await payloadOf(listB1)).result?.tools?.length).toBeGreaterThan(0);
+
+      // The server is still alive: a third request from B works too.
+      const listB2 = await listTools(sessionB!, 3);
+      expect(listB2.status).toBe(200);
+      expect((await payloadOf(listB2)).result?.tools?.length).toBeGreaterThan(0);
+
+      // Sibling proof of the eviction: A's closed session no longer routes.
+      const listA = await listTools(sessionA!, 4);
+      expect(listA.status).toBe(400);
+
+      // Clean shutdown at the end.
+      await handle.shutdown();
+    } finally {
+      await handle.shutdown();
+      expect(existsSync(join(root, 'yatt.db'))).toBe(true);
+    }
+  }, 30000);
+
   it('memory sessions are wiped on shutdown; zero disk traces (F6/C09/D7)', async () => {
     const root = makeTmpRoot();
     const handle = await createYattServer({
@@ -294,6 +362,45 @@ describe('createYattServer bootstrap', () => {
     await handle.shutdown();
     expect(existsSync(join(root, 'yatt.db'))).toBe(true);
   });
+
+  it('warns exactly once when HTTP runs without auth; silent logging silences it (F11)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // HTTP + NO auth: exactly ONE authentication warning reaches stderr.
+      const root = makeTmpRoot();
+      const port = 30000 + Math.floor(Math.random() * 20000);
+      const handle = await createYattServer({
+        paths: { root },
+        engine: { enabled: false },
+        http: { enabled: true, port }, // no auth on purpose
+      });
+      await handle.start();
+      await handle.shutdown();
+
+      const authWarnings = errorSpy.mock.calls.filter((args) =>
+        args.map(String).join(' ').includes('authentication'),
+      );
+      expect(authWarnings).toHaveLength(1);
+      // The log channel was live during the boot (the listening line uses it).
+      expect(errorSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      errorSpy.mockClear();
+
+      // Same boot with logging.level 'silent': ZERO console.error output.
+      const quietRoot = makeTmpRoot();
+      const quietPort = 30000 + Math.floor(Math.random() * 20000);
+      const quiet = await createYattServer({
+        paths: { root: quietRoot },
+        engine: { enabled: false },
+        http: { enabled: true, port: quietPort }, // still no auth
+        logging: { level: 'silent' },
+      });
+      await quiet.start();
+      await quiet.shutdown();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  }, 30000);
 
   it('answers the MCP client over the chosen transport (C01 partial)', async () => {
     const root = makeTmpRoot();
