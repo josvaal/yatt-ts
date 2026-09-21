@@ -10,7 +10,9 @@ type: decision
 
 **Why**: El usuario eligió la "Opción 2" (query provider inyectable) para usar su DataSource vivo de TypeORM. GATE 1: (1a) brazo con `type: 'provider'`, (2a) retorno = array completo de filas (yatt corta), (3a) aviso + error i18n para db_assert, (4) ejemplo TypeORM + README.
 
-**Where**: /home/codicore/yatt-ts, HEAD `058e09e` · artefactos en `features/appdb-query-provider/` (brief/context/cases C41-C51/plan/verification).
+**Where**: /home/codicore/yatt-ts, HEAD `79fac25` (release v0.2.0) · artefactos en `features/appdb-query-provider/` (brief/context/cases C41-C51/plan/verification).
+
+**Delivery state (2026-09-19)**: GitHub público github.com/josvaal/yatt-ts (main + tags v0.1.0 y v0.2.0, releases de ambas). v0.1.0 quedó congelada pre-provider (a propósito, elección del usuario). v0.2.0 = provider + hardening. **npm publish PENDIENTE del usuario** (`npm login && npm publish` — prepublishOnly corre tests+typecheck+build; nombre yatt-ts libre, tag latest automático en primera publicación).
 
 **Learned**:
 - Verificación: 208 unit + 8/8 e2e Chromium real + smoke 133/133 + install-proof con provider desde el tarball.
