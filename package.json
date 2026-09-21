@@ -17,14 +17,18 @@
     "test-runner",
     "headless"
   ],
+  "author": {
+    "name": "José Valentino",
+    "email": "josval.personal@gmail.com"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yatt-labs/yatt-ts.git"
+    "url": "git+https://github.com/josvaal/yatt-ts.git"
   },
   "bugs": {
-    "url": "https://github.com/yatt-labs/yatt-ts/issues"
+    "url": "https://github.com/josvaal/yatt-ts/issues"
   },
-  "homepage": "https://github.com/yatt-labs/yatt-ts#readme",
+  "homepage": "https://github.com/josvaal/yatt-ts#readme",
   "engines": {
     "node": ">=22.5"
   },
@@ -47,7 +51,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/make-bin-executable.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "prepublishOnly": "npm run test && npm run typecheck && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
