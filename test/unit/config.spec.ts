@@ -229,6 +229,50 @@ describe('appDb validation (D22, C21 groundwork)', () => {
   });
 });
 
+describe('appDb provider arm (C48)', () => {
+  const provider = async () => [{ id: 1 }];
+
+  it('accepts an async function provider and keeps it by reference', () => {
+    expect(resolveConfig({ appDb: { type: 'provider', provider } }).appDb).toEqual({
+      type: 'provider',
+      provider,
+    });
+  });
+
+  it('accepts a sync function provider returning the rows array', () => {
+    const syncProvider = () => [{ id: 1 }];
+    expect(resolveConfig({ appDb: { type: 'provider', provider: syncProvider } }).appDb).toEqual({
+      type: 'provider',
+      provider: syncProvider,
+    });
+  });
+
+  it('rejects a non-function provider naming the key', () => {
+    expectConfigError(
+      () => resolveConfig({ appDb: { type: 'provider', provider: 'not-a-function' } }),
+      /config\.appDb\.provider: expected a function/,
+    );
+    expectConfigError(
+      () => resolveConfig({ appDb: { type: 'provider', provider: 42 } }),
+      /config\.appDb\.provider: expected a function/,
+    );
+  });
+
+  it('rejects a missing provider naming the key', () => {
+    expectConfigError(
+      () => resolveConfig({ appDb: { type: 'provider' } }),
+      /config\.appDb\.provider: expected a function/,
+    );
+  });
+
+  it('rejects unknown keys inside the provider arm naming the key', () => {
+    expectConfigError(
+      () => resolveConfig({ appDb: { type: 'provider', provider, file: 'x.db' } }),
+      /config\.appDb\.file: unrecognized key/,
+    );
+  });
+});
+
 describe('path resolution (C11)', () => {
   it('resolves a relative root against cwd and derives artifact paths from it', () => {
     const cfg = resolveConfig({ paths: { root: './tmp-yatt-root' } });

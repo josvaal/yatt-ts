@@ -9,7 +9,7 @@ export {
   resolveConfig,
   YattConfigSchema,
 } from './config/index.js';
-export type { ConfigIssue, ResolvedConfig, YattConfig } from './config/index.js';
+export type { AppDbProvider, AppDbQueryFn, ConfigIssue, ResolvedConfig, YattConfig } from './config/index.js';
 
 export { getStrings } from './i18n/index.js';
 export type { Locale, PromptCopy, YattStrings } from './i18n/index.js';

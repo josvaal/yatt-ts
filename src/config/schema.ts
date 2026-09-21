@@ -167,7 +167,33 @@ const AppDbPostgresSchema = z
     error: 'provide exactly one of "password" or "passwordProvider"',
   });
 
-const AppDbSchema = z.discriminatedUnion('type', [AppDbSqliteSchema, AppDbPostgresSchema]);
+/**
+ * Host-provided query function (C41): executes read-only SQL IN THE HOST
+ * PROCESS through its own live connection/pool (e.g. TypeORM's
+ * `dataSource.query(sql)`). The contract is the FULL rows array of row
+ * objects — yatt caps the tool output and reports the real count itself.
+ */
+export type AppDbQueryFn = (
+  sql: string,
+) => Promise<Record<string, unknown>[]> | Record<string, unknown>[];
+
+const AppDbProviderSchema = z.strictObject({
+  type: z.literal('provider'),
+  /** In-process query function; must be a function (the error names the key, C13). */
+  provider: z.custom<AppDbQueryFn>(
+    (value) => typeof value === 'function',
+    'expected a function (sql) => rows[]',
+  ),
+});
+
+/** Resolved shape of the `provider` arm of `appDb`. */
+export type AppDbProvider = z.output<typeof AppDbProviderSchema>;
+
+const AppDbSchema = z.discriminatedUnion('type', [
+  AppDbSqliteSchema,
+  AppDbPostgresSchema,
+  AppDbProviderSchema,
+]);
 
 const LoggingSchema = z.strictObject({
   level: z.enum(['silent', 'error', 'warn', 'info', 'debug']).default('info'),
