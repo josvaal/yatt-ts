@@ -1,6 +1,6 @@
 {
   "name": "yatt-ts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Highly configurable YATT MCP server library: spin up your own UI-testing MCP server (35 tools, Playwright engine, headless-first) with strict, typed configuration for paths, HTTP transport, auth, permissions, sessions and retention.",
   "type": "module",
   "license": "MIT",
