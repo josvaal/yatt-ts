@@ -119,7 +119,8 @@ app.use('/api/mcp', (req, res) => mcp.handle(req, res, req.body));
 
 - **Cuándo usar cada uno**: `http.enabled` para un endpoint MCP independiente que manejás de punta a punta; el handler cuando un backend existente debe alojarlo (middleware compartido, TLS, despliegue).
 - **El ciclo de vida es tuyo**: NO llames a `yatt.start()` en modo handler (el handler conecta el servidor MCP por sesión él mismo); al apagar, llamá primero `mcp.close()` y después `yatt.shutdown()`. En una app Nest llamá a `app.enableShutdownHooks()` — sin eso Nest nunca dispara `onModuleDestroy` en SIGINT/SIGTERM y el apagado ordenado no se ejecuta.
-- **Auth con guards del host**: sin auth por default — mandan los guards/middleware de tu framework. O pasá `authenticate: (req) => boolean` (`false` → 401 JSON, throw → 500 controlado).
+- **Auth con guards del host**: sin auth por default — mandan los guards/middleware de tu framework. O pasá `authenticate: (req) => boolean` (`false` → 401 JSON, throw → 500 controlado). Excepción: si configuraste `auth.token`/`auth.tokenHash` en el server, el handler los usa como chequeo bearer por defecto (y avisa con una línea en el log) salvo que pases tu propio `authenticate`.
+- **Tamaño del body**: el camino de request raw rechaza bodies de más de 2 MB con `413` (opción `maxBodyBytes` para cambiarlo). Los bodies ya parseados por tu framework se saltean el tope — ese límite lo maneja tu parser.
 - **Un cliente por vez** por servidor (un solo motor de navegador): cuando un segundo cliente inicializa, la sesión vieja se desaloja (new-wins).
 - Receta NestJS completa (controller + service + bearer guard): [`examples/09-nestjs-mcp-handler.ts`](./examples/09-nestjs-mcp-handler.ts).
 
